@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools", "cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stratigrapy"
+version = "0.0.1"
+requires-python = ">=3.10"
+authors = [{name = "Guillaume Rongier"}]
+description = "Python package for stratigraphic modeling based on Landlab"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+keywords = ["python", "stratigraphy", "sedimentology", "stratigraphic modeling", "basin modeling"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Development Status :: 4 - Beta",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "landlab",
+]
+
+[tool.setuptools]
+ext-modules = [
+    {name = "stratigrapy.layers.cfuncs", sources = ["stratigrapy/layers/cfuncs.pyx"]},
+    {name = "stratigrapy.plot.cfuncs", sources = ["stratigrapy/plot/cfuncs.pyx"]},
+    {name = "stratigrapy.components.stream_power.cfuncs", sources = ["stratigrapy/components/stream_power/cfuncs.pyx"]},
+    {name = "stratigrapy.components.landsliding.cfuncs", sources = ["stratigrapy/components/landsliding/cfuncs.pyx"]},
+]
+
+[tool.setuptools.packages.find]
+exclude = ["examples"]
+
+[project.urls]
+"Homepage" = "https://github.com/grongier/stratigrapy"
+"Bug Tracker" = "https://github.com/grongier/stratigrapy/issues"
