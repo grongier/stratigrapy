@@ -2,6 +2,7 @@ from .sea_level import SeaLevelCalculator
 from .weathering import BedrockWeatherer
 from .diffusion import GravityDrivenDiffuser
 from .stream_power import WaterDrivenDiffuser
+from .stream_power import LinearDeclineTransporter
 from .landsliding import SimpleSedimentLandslider
 from .compaction import SedimentCompactor
 
@@ -10,6 +11,7 @@ COMPONENTS = [
     BedrockWeatherer,
     GravityDrivenDiffuser,
     WaterDrivenDiffuser,
+    LinearDeclineTransporter,
     SimpleSedimentLandslider,
     SedimentCompactor,
 ]

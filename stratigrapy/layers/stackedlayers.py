@@ -275,7 +275,7 @@ class StackedLayers:
         """Thickness of each layer.
 
         The sum of all class thicknesses for each layer and stack as an array
-        of shape `(number_of_slayers, number_of_stacks)`.
+        of shape `(number_of_layers, number_of_stacks)`.
         """
         return np.sum(self.dz, axis=2)
 
@@ -290,10 +290,10 @@ class StackedLayers:
 
     @property
     def dz(self):
-        """Thickness of each layer.
+        """Thickness of each class in each layer.
 
         The thickness of each layer at each stack as an array of shape
-        `(number_of_layers, number_of_stacks)`.
+        `(number_of_layers, number_of_stacks, number of classes)`.
         """
         return self._attrs["_dz"][self._first_layer:self._first_layer + self.number_of_layers]
 
@@ -309,6 +309,15 @@ class StackedLayers:
         np.divide(self.dz, layer_thickness, out=layer_composition, where=layer_thickness > 0.)
 
         return layer_composition
+
+    @property
+    def most_frequent_class(self):
+        """The most frequent class of each layer.
+
+        The most frequent class of each layer at each stack as an array of shape
+        `(number_of_layers, number_of_stacks)`.
+        """
+        return np.argmax(self.composition, axis=2)
 
     @property
     def number_of_layers(self):

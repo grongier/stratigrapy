@@ -48,6 +48,8 @@ def _get_variable_values(grid, var):
         return grid.stacked_layers['_dz']
     elif var == 'composition':
         return grid.stacked_layers.composition
+    elif var == 'most_frequent_class' or var == 'most_frequent':
+        return grid.stacked_layers.most_frequent_class
     else:
         return grid.stacked_layers[var]
 
@@ -131,12 +133,12 @@ def _plot_vertical_slice(ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, 
             i_x = grid.cell_grid_shape[1]//2
         coords = np.tile(y[i_y, i_x], (2, 1))
 
-    vmin = np.min(values[..., i_y, i_x]) if vmin is None and 'norm' not in kwargs else vmin
-    vmax = np.max(values[..., i_y, i_x]) if vmax is None and 'norm' not in kwargs else vmax
+    vmin = np.nanmin(values[..., i_y, i_x]) if vmin is None and 'norm' not in kwargs else vmin
+    vmax = np.nanmax(values[..., i_y, i_x]) if vmax is None and 'norm' not in kwargs else vmax
 
     c = []
     for i in range(len(values)):
-        layer = values[i, i_y, i_x].copy()
+        layer = values[i, i_y, i_x].astype(float)
         mask_layer(layer, dz[i, i_y, i_x])
         ci = ax.pcolormesh(coords,
                            z[i:i + 2, i_y, i_x],
@@ -223,7 +225,7 @@ def plot_layers(
     Returns
     -------
     c : matplotlib.collections.QuadMesh or list
-        Mesh(es) that constitute(s) the plot.
+        The mesh(es) that constitute(s) the plot.
 
     Reference
     ---------
@@ -339,3 +341,71 @@ class RasterModelGridLayerPlotterMixIn:
         stratigrapy.plot.plot_layers
         """
         return plot_layers(ax, self, var, i_x, i_y, i_layer, i_class, vmin, vmax, shading, **kwargs)
+
+
+def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False):
+    """Extract the layers coordinates and values of a variable for plotting, in
+    particular with PyVista.
+
+    Visualization follows the tie-centered approach described by Tetzlaff (2023);
+    channel erosion and deposition is not properly handled in the vertical cross-
+    sections (see figure 12 of Tetzlaff (2023)).
+
+    Parameters
+    ----------
+    grid : RasterModelGrid
+        The grid containing the StackedLayers to plot.
+    var : str or array-like
+        The variable to plot as color, which can be on the StackedLayers or as
+        a separate array. The keywords 'dz' or 'thickness' can be used to plot
+        the layer thickness; the keyword 'composition' can be used to plot the
+        proportion of each lithology.
+    i_class : int or callable, optional
+        The index to select the lithology to plot. A callable will merge the all
+        the lithologies together (e.g., numpy.mean or numpy.sum).
+    axis : int
+        The axis along which to post-process the layers to manage pinching-out
+        cells. By default, the x-axis is used.
+    fill_nan: bool
+        If True, fills the NaN values of a layer with the values of the layer
+        below.
+
+    Returns
+    -------
+    x : ndarray
+        The coordinates along the x-axis of the 3D grid making the layers.
+    y : ndarray
+        The coordinates along the y-axis of the 3D grid making the layers.
+    z : ndarray
+        The coordinates along the z-axis of the 3D grid making the layers.
+    layers: ndarray
+        The values of the variable `var` based on a tie-centered scheme. This
+        array has the same size as `x`, `y`, and `z` along its last two
+        dimensions (the horizontal dimensions y and x), but one element less
+        along its first dimension (the vertical dimension z).
+
+    Reference
+    ---------
+    Tetzlaff, D. (2023)
+        Stratigraphic forward modeling software package for research and education
+        https://arxiv.org/abs/2302.05272
+    """
+    z = _get_layer_elevation(grid).reshape(-1, *grid.cell_grid_shape)
+    y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
+    y = np.tile(y, (len(z), 1, 1))
+    x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
+    x = np.tile(x, (len(z), 1, 1))
+    dz = _select_sublayers(_get_variable_values(grid, 'dz'), np.sum, axis=2).reshape(-1, *grid.cell_grid_shape)
+    if (var == '_dz' or var == 'dz' or var == 'thickness') and i_class == np.sum:
+        layers = dz
+    else:
+        layers = _select_sublayers(_get_variable_values(grid, var), i_class, axis=2).reshape(-1, *grid.cell_grid_shape)
+
+    for l in range(layers.shape[0]):
+        for c in range(layers.shape[axis]):
+            slices = tuple(slice(None) if i != axis else c for i in range(1, layers.ndim))
+            mask_layer(layers[l, *slices], dz[l, *slices])
+            if fill_nan == True and l > 0:
+                layers[l, np.isnan(layers[l])] = layers[l - 1, np.isnan(layers[l])]
+
+    return x, y, z, layers
