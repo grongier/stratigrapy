@@ -44,7 +44,7 @@ cpdef void calculate_sediment_influx(
     const cython.floating [:] cell_area,
     const cython.floating [:, :] superficial_layer,
     const cython.floating [:] slope,
-    const cython.floating [:] repose_angle,
+    const cython.floating [:, :] repose_angle,
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :] sediment_outflux,
     const double dt,
@@ -84,7 +84,7 @@ cpdef void calculate_sediment_influx(
         total_sediment_influx = 0.
         for k in range(n_sediments):
             total_sediment_influx += sediment_influx[node, k]
-            repose_slope += repose_angle[k]*sediment_influx[node, k]
+            repose_slope += repose_angle[node, k]*sediment_influx[node, k]
         if total_sediment_influx > 0.:
             repose_slope /= n_sediments*total_sediment_influx
             repose_slope = atan(repose_slope*M_PI/180.)

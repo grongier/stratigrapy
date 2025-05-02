@@ -69,6 +69,14 @@ class SimpleSedimentLandslider(Component):
             "mapping": "node",
             "doc": "Node array of receivers (node that receives flow from current node)",
         },
+        "bathymetric__depth": {
+            "dtype": float,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "The water depth under the sea",
+        },
         "topographic__elevation": {
             "dtype": float,
             "intent": "inout",
@@ -90,7 +98,8 @@ class SimpleSedimentLandslider(Component):
     def __init__(
         self,
         grid,
-        repose_angle=2.,
+        repose_angle_cont=2.,
+        repose_angle_mar=2.,
         max_erosion_rate=None,
         fields_to_track=None,
     ):
@@ -99,9 +108,12 @@ class SimpleSedimentLandslider(Component):
         ----------
         grid : ModelGrid
             A grid.
-        repose_angle : float or array-like (m/time)
-            The static angle of repose for one or multiple lithologies above
-            which sediments move downslope.
+        repose_angle_cont : float or array-like (m/time)
+            The static angle of repose in the continental domain for one or
+            multiple lithologies above which sediments move downslope.
+        repose_angle_mar : float or array-like (m/time)
+            The static angle of repose in the continental domain for one or
+            multiple lithologies above which sediments move downslope.
         max_erosion_rate : float (m/time), optional
             The maximum erosion rate of the sediments, which defines the
             thickness of the superficial layer of sediments that can be eroded
@@ -115,8 +127,9 @@ class SimpleSedimentLandslider(Component):
 
         # Parameters
         n_nodes = grid.number_of_nodes
-        self.repose_angle = convert_to_array(repose_angle)
-        n_sediments = len(self.repose_angle)
+        self.repose_angle_cont = convert_to_array(repose_angle_cont)
+        n_sediments = len(self.repose_angle_cont)
+        self.repose_angle_mar = convert_to_array(repose_angle_mar)
         self.max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
         self.fields_to_track = format_fields_to_track(fields_to_track)
 
@@ -126,6 +139,7 @@ class SimpleSedimentLandslider(Component):
         if self._stratigraphy.number_of_layers == 0:
             _fields_to_track = {field: grid.at_node[field][grid.core_nodes] for field in self.fields_to_track}
             self._stratigraphy.add(0., time=0., **_fields_to_track)
+        self._bathymetry = reshape_to_match(grid.at_node['bathymetric__depth'], (n_nodes, n_sediments))
         self._time = 0.
 
         # Field for the steepest slope
@@ -145,6 +159,7 @@ class SimpleSedimentLandslider(Component):
         self._steepest_link = np.zeros((n_nodes, 1), dtype=int)
 
         # Fields for sediment fluxes
+        self._repose_angle = np.zeros((n_nodes, n_sediments))
         self._repose_slope = np.zeros((n_nodes, 1))
         self._slope_difference = np.zeros((n_nodes, 1))
         self._sediment_influx = np.zeros((n_nodes, n_sediments))
@@ -158,6 +173,14 @@ class SimpleSedimentLandslider(Component):
 
         # Grid elements
         self._cell_area = reshape_to_match(self._grid.cell_area_at_node, (n_nodes, n_sediments))
+
+    def _calculate_sediment_repose_angle(self):
+        """
+        Calculates the repose angle of the sediments over the continental and
+        marine domains.
+        """
+        self._repose_angle[self._bathymetry[:, 0] == 0.] = self.repose_angle_cont
+        self._repose_angle[self._bathymetry[:, 0] > 0.] = self.repose_angle_mar
 
     def _calculate_weathering_depth(self, dt):
         """
@@ -185,7 +208,7 @@ class SimpleSedimentLandslider(Component):
         self._steepest_receivers[:] = np.argmax(self._slope, axis=1, keepdims=True)
         self._steepest_slope[:] = np.take_along_axis(self._slope, self._steepest_receivers, axis=1)
         self._steepest_link[:] = np.take_along_axis(self._link_to_receiver, self._steepest_receivers, axis=1)
-        self._repose_slope[:] = np.arctan(np.deg2rad(np.sum(self.repose_angle*self._superficial_composition, axis=1, keepdims=True)))
+        self._repose_slope[:] = np.arctan(np.deg2rad(np.sum(self._repose_angle*self._superficial_composition, axis=1, keepdims=True)))
         self._slope_difference[:] = self._steepest_slope - self._repose_slope
         self._slope_difference[self._slope_difference < 0.] = 0.
         self._sediment_outflux[:] = self._superficial_composition*self._slope_difference*self._link_lengths[self._steepest_link]*self._cell_area/dt
@@ -202,6 +225,7 @@ class SimpleSedimentLandslider(Component):
 
         self._time += dt
 
+        self._calculate_sediment_repose_angle()
         self._calculate_weathering_depth(dt)
         self._calculate_superfical_layer()
         self._calculate_sediment_outflux(dt)
@@ -214,7 +238,7 @@ class SimpleSedimentLandslider(Component):
                                   self._cell_area[:, 0],
                                   self._superficial_layer,
                                   self._steepest_slope[:, 0],
-                                  self.repose_angle,
+                                  self._repose_angle,
                                   self._sediment_influx,
                                   self._sediment_outflux,
                                   dt)
