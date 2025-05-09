@@ -110,7 +110,8 @@ def resize_array(array, left_new_cap, right_new_cap):
 class StackedLayersMixIn:
     """MixIn that adds a StackedLayers attribute to a ModelGrid."""
 
-    def __init__(self, number_of_classes, initial_allocation, new_allocation):
+    def __init__(self, number_of_classes, initial_allocation, new_allocation,
+                 number_of_layers_to_fuse, number_of_top_layers, remove_empty_layers):
         """Instantiates the member variables of the StackedLayersMixIn.
 
         Parameters
@@ -128,10 +129,20 @@ class StackedLayersMixIn:
             process. If an int, the layers are pre-allocated at the end; it an
             array-like, the first element corresponds to layers pre-allocated at the
             start, the second to layers pre-allocated at the end.
+        number_of_layers_to_fuse : int, optional
+            Number of layers to merge together when calling `fuse`.
+        number_of_top_layers : int, optional
+            Number of layers at the top of the stack to ignore when calling `fuse`.
+        remove_empty_layers : bool, optional
+            If True, remove the layers without any deposits at the top of the stack
+            when adding a layer; otherwise, keep all the layers.
         """
         self.number_of_classes = number_of_classes
         self.initial_allocation = initial_allocation
         self.new_allocation = new_allocation
+        self.number_of_layers_to_fuse = number_of_layers_to_fuse
+        self.number_of_top_layers = number_of_top_layers
+        self.remove_empty_layers = remove_empty_layers
 
     @property
     def stacked_layers(self):
@@ -142,7 +153,10 @@ class StackedLayersMixIn:
             self._stacked_layers = StackedLayers(self.number_of_cells,
                                                  self.number_of_classes,
                                                  self.initial_allocation,
-                                                 self.new_allocation)
+                                                 self.new_allocation,
+                                                 self.number_of_layers_to_fuse,
+                                                 self.number_of_top_layers,
+                                                 self.remove_empty_layers)
         return self._stacked_layers
 
     @property
@@ -173,6 +187,13 @@ class StackedLayers:
         Number of layers pre-allocated when adding new layers to speed up the
         process. If an array-like, different number of layers are pre-allocated
         at the start and at the end of the stacks.
+    number_of_layers_to_fuse : int, optional
+        Number of layers to merge together when calling `fuse`.
+    number_of_top_layers : int, optional
+        Number of layers at the top of the stack to ignore when calling `fuse`.
+    remove_empty_layers : bool, optional
+        If True, remove the layers without any deposits at the top of the stack
+        when adding a layer; otherwise, keep all the layers.
     """
 
     def __init__(
@@ -181,6 +202,9 @@ class StackedLayers:
         number_of_classes=1,
         initial_allocation=0,
         new_allocation=1,
+        number_of_layers_to_fuse=1,
+        number_of_top_layers=1,
+        remove_empty_layers=False,
     ):
         super().__init__()
 
@@ -194,6 +218,10 @@ class StackedLayers:
         self._surface_index = np.zeros(number_of_stacks, dtype=int)
         self._attrs = {}
 
+        self.number_of_layers_to_fuse = number_of_layers_to_fuse
+        self.number_of_top_layers = number_of_top_layers
+        self._number_of_fused_layers = 0
+
         dims = (self.number_of_layers, self.number_of_stacks, self.number_of_classes)
         self._attrs["_dz"] = np.empty(dims, dtype=float)
         self._resize(initial_allocation[0], initial_allocation[1])
@@ -203,6 +231,7 @@ class StackedLayers:
             self.new_allocation = (new_allocation, new_allocation)
         else:
             self.new_allocation = new_allocation
+        self.remove_empty_layers = remove_empty_layers
 
     def __getitem__(self, name):
         return self._attrs[name][self._first_layer:self._first_layer + self.number_of_layers]
@@ -269,7 +298,7 @@ class StackedLayers:
         of shape `(number_of_stacks, )`.
         """
         return np.sum(self.dz, axis=(0, 2))
-    
+
     @property
     def layer_thickness(self):
         """Thickness of each layer.
@@ -331,51 +360,65 @@ class StackedLayers:
         """
         return self._attrs["_dz"].shape[0]
 
-    def _add(self, dz, append=True, **kwds):
-        """Add a layer to the beginning or the end of the stacks.
+    def add(self, dz, at_bottom=False, update=False, update_compatible=False, **kwds):
+        """Add a layer to the stack.
+
+        Parameters
+        ----------
+        dz : float or array_like
+            Thickness to add to each stack.
+        at_bottom : bool, optional
+            If False, add the layer to the top of the stack; otherwise, insert
+            the layer at the bottom of the stack.
+        update : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the top or bottom of the
+            stack (depending on `at_bottom`).
+        update_compatible : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the top or bottom of the
+            stack (depending on `at_bottom`) only if the new layer is compatible
+            with the existing layer.
         """
         if self.number_of_layers == 0:
             self._setup_layers(**kwds)
 
-        self._add_empty_layer(append=append)
+        if update_compatible == True:
+            is_compatible = self.number_of_layers > 0 and self.is_compatible(dz, **kwds)
+        else:
+            is_compatible = False
+
+        if update == False or (update == False and is_compatible == False):
+            self._add_empty_layer(at_bottom=at_bottom)
 
         layer = self._first_layer
-        if append:
+        if at_bottom == False:
             layer += self.number_of_layers - 1
         _deposit_or_erode(self._attrs["_dz"], self._first_layer, layer, dz)
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
 
-        for name in kwds:
-            try:
-                self._attrs[name][layer] = kwds[name]
-            except KeyError as exc:
-                raise ValueError(
-                    f"{name!r} is not being tracked. Error in adding."
-                ) from exc
+        if is_compatible == False:
+            for name in kwds:
+                try:
+                    self._attrs[name][layer] = kwds[name]
+                except KeyError as exc:
+                    raise ValueError(
+                        f"{name!r} is not being tracked. Error in adding."
+                    ) from exc
 
-    def add(self, dz, **kwds):
-        """Add a layer to the stacks.
-
-        Parameters
-        ----------
-        dz : float or array_like
-            Thickness to add to each stack.
-        """
-        self._add(dz, append=True, **kwds)
-
-    def insert(self, dz, **kwds):
-        """Insert a layer at the beginning of the stacks.
-
-        Parameters
-        ----------
-        dz : float or array_like
-            Thickness to add to each stack.
-        """
-        self._add(dz, append=False, **kwds)
+        if self.remove_empty_layers == True:
+            self._remove_empty_layers()
 
     def update(self, layer, dz, **kwds):
         """Update a given layer in the stacks.
+
+        Parameters
+        ----------
+        layer : int
+            Index of the layer to update.
+        dz : float or array_like
+            Thickness to add to each stack.
         """
         if self.number_of_layers == 0:
             self._setup_layers(**kwds)
@@ -412,7 +455,7 @@ class StackedLayers:
         n_removed = n_blocks * (step - 1)
         for name, array in self._attrs.items():
             middle = _reduce_matrix(array[start:stop], step, kwds.get(name, np.sum))
-            top = array[stop : self._number_of_layers]
+            top = array[stop : self._first_layer + self._number_of_layers]
 
             array[start : start + n_blocks] = middle
             array[start + n_blocks : start + n_blocks + len(top)] = top
@@ -421,6 +464,19 @@ class StackedLayers:
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
 
+    def fuse(self, **kwds):
+        """Fuse layers to save computational resources during runtime. Layers
+        are fused together based on `number_of_layers_to_fuse` and, once fused,
+        are not fused again. The top layers defined by `number_of_top_layers`
+        are not fused.
+        """
+        start_fuse = self._number_of_fused_layers
+        stop_fuse = self._number_of_layers - self.number_of_top_layers
+        if stop_fuse > start_fuse:
+            prev_number_of_layers = self._number_of_layers
+            self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
+            self._number_of_fused_layers = self._number_of_fused_layers + prev_number_of_layers - self._number_of_layers
+
     @property
     def surface_index(self):
         """Index to the top non-empty layer.
@@ -428,7 +484,8 @@ class StackedLayers:
         return self._surface_index
 
     def get_surface_values(self, name):
-        """Values of a field on the surface layer."""
+        """Values of a field on the surface layer.
+        """
         return self._attrs[name][self.surface_index, np.arange(self._number_of_stacks)]
 
     def get_superficial_layer(self, dz):
@@ -452,18 +509,19 @@ class StackedLayers:
 
         return superficial_layer
 
-    def _add_empty_layer(self, append=True):
-        """Add a new empty layer to the stacks."""
-        if append == True and self._right_allocated == 0:
+    def _add_empty_layer(self, at_bottom=False):
+        """Add a new empty layer to the stacks.
+        """
+        if at_bottom == False and self._right_allocated == 0:
             self._resize(0, self.new_allocation[1])
             self._right_allocated = self.new_allocation[1]
-        elif append == False and self._left_allocated == 0:
+        elif at_bottom == True and self._left_allocated == 0:
             self._resize(self.new_allocation[0], 0)
             self._left_allocated = self.new_allocation[0]
             self._first_layer = self.new_allocation[0]
 
         self._number_of_layers += 1
-        if append:
+        if at_bottom == False:
             self._right_allocated -= 1
             layer = self._first_layer + self.number_of_layers - 1
         else:
@@ -474,7 +532,45 @@ class StackedLayers:
         for name in self._attrs:
             self._attrs[name][layer] = 0.0
 
+    def _remove_empty_layers(self):
+        """Remove empty layers at the top of the stack
+        """
+        number_of_filled_layers = self.surface_index.max() + 1 - self._first_layer
+        if number_of_filled_layers < self.number_of_layers:
+            self._number_of_layers = number_of_filled_layers
+
+    def is_compatible(self, dz, **kwds):
+        """Check if a new layer is compatible with the existing top layer.
+
+        Parameters
+        ----------
+        dz : float or array_like
+            Thickness to add to each stack.
+
+        Returns
+        -------
+        bool
+            ``True`` if the new layer is compatible, otherwise ``False``.
+        """
+        where_deposition = dz > 0.0
+
+        if np.any(where_deposition):
+            if not_tracked := set(kwds) - set(self):
+                raise ValueError(
+                    "Error adding layer."
+                    f" {', '.join(sorted(repr(t) for t in not_tracked))}"
+                    " is not being tracked. Currently tracking:"
+                    f" {', '.join(sorted(repr(t) for t in set(self)))}"
+                )
+            for name in kwds:
+                is_compatible = self[name][self.surface_index] == kwds[name]
+
+                if not np.all(is_compatible[where_deposition]):
+                    return False
+        return True
+
     def _resize(self, left_new_cap, right_new_cap):
-        """Allocate more memory for the layers."""
+        """Allocate more memory for the layers.
+        """
         for name in self._attrs:
             self._attrs[name] = resize_array(self._attrs[name], left_new_cap, right_new_cap)

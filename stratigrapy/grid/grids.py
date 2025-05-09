@@ -50,6 +50,9 @@ class RasterModelGrid(StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _Ras
         number_of_classes=1,
         initial_allocation=0,
         new_allocation=1,
+        number_of_layers_to_fuse=1,
+        number_of_top_layers=1,
+        remove_empty_layers=False,
     ):
         """Create a 2D grid with equal spacing.
 
@@ -88,6 +91,13 @@ class RasterModelGrid(StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _Ras
             Number of layers pre-allocated when adding new layers to speed up the
             process. If an array-like, different number of layers are pre-allocated
             at the start and at the end of the stacks.
+        number_of_layers_to_fuse : int, optional
+            Number of layers to merge together when calling `fuse`.
+        number_of_top_layers : int, optional
+            Number of layers at the top of the stack to ignore when calling `fuse`.
+        remove_empty_layers : bool, optional
+            If True, remove the layers without any deposits at the top of the stack
+            when adding a layer; otherwise, keep all the layers.
 
         Returns
         -------
@@ -97,7 +107,8 @@ class RasterModelGrid(StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _Ras
         _RasterModelGrid.__init__(self, shape, xy_spacing, xy_of_lower_left,
                                   xy_of_reference, xy_axis_name, xy_axis_units, bc)
         StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation)
+                                    new_allocation, number_of_layers_to_fuse,
+                                    number_of_top_layers, remove_empty_layers)
 
 
 ################################################################################
@@ -122,6 +133,9 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
         number_of_classes=1,
         initial_allocation=0,
         new_allocation=1,
+        number_of_layers_to_fuse=1,
+        number_of_top_layers=1,
+        remove_empty_layers=False,
     ):
         """Create a Voronoi Delaunay grid from a set of points.
 
@@ -151,6 +165,13 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
             Number of layers pre-allocated when adding new layers to speed up the
             process. If an array-like, different number of layers are pre-allocated
             at the start and at the end of the stacks.
+        number_of_layers_to_fuse : int, optional
+            Number of layers to merge together when calling `fuse`.
+        number_of_top_layers : int, optional
+            Number of layers at the top of the stack to ignore when calling `fuse`.
+        remove_empty_layers : bool, optional
+            If True, remove the layers without any deposits at the top of the stack
+            when adding a layer; otherwise, keep all the layers.
 
         Returns
         -------
@@ -160,7 +181,8 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
         _VoronoiDelaunayGrid.__init__(self, x, y, reorient_links, xy_of_reference,
                                       xy_axis_name, xy_axis_units)
         StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation)
+                                    new_allocation, number_of_layers_to_fuse,
+                                    number_of_top_layers, remove_empty_layers)
 
 
 class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
@@ -186,6 +208,9 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
         number_of_classes=1,
         initial_allocation=0,
         new_allocation=1,
+        number_of_layers_to_fuse=1,
+        number_of_top_layers=1,
+        remove_empty_layers=False,
     ):
         """Create a grid of voronoi cells with a structured perimeter.
 
@@ -236,6 +261,13 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
             Number of layers pre-allocated when adding new layers to speed up the
             process. If an array-like, different number of layers are pre-allocated
             at the start and at the end of the stacks.
+        number_of_layers_to_fuse : int, optional
+            Number of layers to merge together when calling `fuse`.
+        number_of_top_layers : int, optional
+            Number of layers at the top of the stack to ignore when calling `fuse`.
+        remove_empty_layers : bool, optional
+            If True, remove the layers without any deposits at the top of the stack
+            when adding a layer; otherwise, keep all the layers.
 
         Returns
         -------
@@ -246,7 +278,8 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
                                     xy_min_spacing, seed, xy_of_reference,
                                     xy_axis_name, xy_axis_units)
         StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation)
+                                    new_allocation, number_of_layers_to_fuse,
+                                    number_of_top_layers, remove_empty_layers)
 
 
 ################################################################################
@@ -276,6 +309,9 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
         number_of_classes=1,
         initial_allocation=0,
         new_allocation=1,
+        number_of_layers_to_fuse=1,
+        number_of_top_layers=1,
+        remove_empty_layers=False,
     ):
         """Create a grid of hexagonal cells.
 
@@ -316,6 +352,13 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
             Number of layers pre-allocated when adding new layers to speed up the
             process. If an array-like, different number of layers are pre-allocated
             at the start and at the end of the stacks.
+        number_of_layers_to_fuse : int, optional
+            Number of layers to merge together when calling `fuse`.
+        number_of_top_layers : int, optional
+            Number of layers at the top of the stack to ignore when calling `fuse`.
+        remove_empty_layers : bool, optional
+            If True, remove the layers without any deposits at the top of the stack
+            when adding a layer; otherwise, keep all the layers.
 
         Returns
         -------
@@ -326,4 +369,5 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
                                node_layout, reorient_links, xy_of_reference,
                                xy_axis_name, xy_axis_units)
         StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation)
+                                    new_allocation, number_of_layers_to_fuse,
+                                    number_of_top_layers, remove_empty_layers)
