@@ -42,7 +42,6 @@ cpdef void calculate_sediment_influx(
     const id_t [:] flow_receivers,
     const cython.floating [:] link_lengths,
     const cython.floating [:] cell_area,
-    const cython.floating [:, :] superficial_layer,
     const cython.floating [:] slope,
     const cython.floating [:, :] repose_angle,
     cython.floating [:, :] sediment_influx,
@@ -51,9 +50,9 @@ cpdef void calculate_sediment_influx(
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
-    cdef unsigned int n_sediments = superficial_layer.shape[1]
+    cdef unsigned int n_sediments = sediment_outflux.shape[1]
     cdef unsigned int node, i, k
-    cdef double total_sediment_influx, max_sediment_outflux, repose_slope, new_slope
+    cdef double total_sediment_influx, repose_slope, new_slope
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
     # Because calculation of the outflux requires the influx, this operation
@@ -62,17 +61,6 @@ cpdef void calculate_sediment_influx(
 
         # Choose the node id
         node = node_order[i]
-
-        # For each sediment class...
-        for k in range(n_sediments):
-            # Compute the available sediments, i.e., the maximum sediment ouflux
-            max_sediment_outflux = superficial_layer[node, k]*cell_area[node]/dt
-            if max_sediment_outflux > 0.:
-                # Update the sediment outflux
-                if sediment_outflux[node, k] >= max_sediment_outflux:
-                    sediment_outflux[node, k] = max_sediment_outflux
-            else:
-                sediment_outflux[node, k] = 0.
 
         # Here we assume that the influx gets transported (if needed) before the
         # outflux, i.e., we use the current slope instead of calculating the

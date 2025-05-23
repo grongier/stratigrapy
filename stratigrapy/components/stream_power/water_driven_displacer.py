@@ -1,4 +1,4 @@
-"""Water-driven diffuser"""
+"""Water-driven displacer"""
 
 # MIT License
 
@@ -27,26 +27,27 @@ import numpy as np
 from landlab import Component
 
 from ...utils import convert_to_array, format_fields_to_track
-from .cfuncs import calculate_sediment_influx
+from .cfuncs import calculate_sediment_fluxes
 
 
 ################################################################################
 # Component
 
-class WaterDrivenDiffuser(Component):
-    """Water-driven diffusion of a Landlab field in continental and marine domains.
+class WaterDrivenDisplacer(Component):
+    """xi-q model for erosion and transport of a Landlab field in continental
+    and marine domains.
 
     References
     ----------
-    Granjeon, D. (1996)
-        Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
-        https://theses.hal.science/tel-00648827
-    Granjeon, D., & Joseph, P. (1999)
-        Concepts and applications of a 3-D multiple lithology, diffusive model in stratigraphic modeling
-        https://doi.org/10.2110/pec.99.62.0197
+    Davy, P., & Lague, D. (2009)
+        Fluvial erosion/transport equation of landscape evolution models revisited
+        https://doi.org/10.1029/2008JF001146
+    Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
+        The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
+        https://doi.org/10.5194/gmd-10-4577-2017
     """
 
-    _name = "WaterDrivenDiffuser"
+    _name = "WaterDrivenDisplacer"
 
     _unit_agnostic = True
 
@@ -120,14 +121,16 @@ class WaterDrivenDiffuser(Component):
     def __init__(
         self,
         grid,
-        transportability_cont=1e-5,
-        transportability_mar=1e-6,
+        erodibility_sed_cont=1e-10,
+        erodibility_sed_mar=1e-10,
+        settling_velocity=1.,
         wave_base=20.,
         max_erosion_rate_sed=1e-2,
-        max_erosion_rate_br=1e-2,
         active_layer_rate=1e-2,
+        erodibility_br_cont=1e-10,
+        erodibility_br_mar=1e-10,
         bedrock_composition=1.,
-        exponent_discharge=1.,
+        exponent_discharge=0.5,
         exponent_slope=1.,
         ref_water_flux=None,
         fields_to_track=None,
@@ -137,25 +140,28 @@ class WaterDrivenDiffuser(Component):
         ----------
         grid : ModelGrid
             A grid.
-        transportability_cont : float or array-like (m/time)
-            The transportability of the sediments over the continental domain
-            for one or multiple lithologies.
-        transportability_mar : float or array-like (m/time)
-            The transportability of the sediments over the marine domain for one
+        erodibility_sed_cont : float or array-like (m/time)
+            The erodibility of the sediments over the continental domain for one
             or multiple lithologies.
+        erodibility_sed_mar : float or array-like (m/time)
+            The erodibility of the sediments over the marine domain for one or
+            multiple lithologies.
+        settling_velocity : float or array-like (m/time)
+            The effective settling velocity for one or multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
         max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
             thickness of the active layer if `active_layer_rate` is None.
-        max_erosion_rate_br : float (m/time)
-            The maximum erosion rate of the bedrock. The erosion rate defines the
-            thickness of the active layer if `active_layer_rate` is None.
         active_layer_rate : float or array-like (m/time), optional
             The rate of formation of the active layer, which is used to determine
             the composition of the transported sediments. By default, it is set
-            by the maximum of `max_erosion_rate_sed` and `max_erosion_rate_br`.
+            by the maximum erosion rate.
+        erodibility_br_cont : float (m/time)
+            The erodibility of the berock over the continental domain.
+        erodibility_br_mar : float (m/time)
+            The erodibility of the berock over the marine domain.
         bedrock_composition : float or array-like (-)
             The composition of the material is added to the StackedLayers from
             the bedrock.
@@ -177,14 +183,17 @@ class WaterDrivenDiffuser(Component):
 
         # Parameters
         n_nodes = grid.number_of_nodes
-        self.K_cont = convert_to_array(transportability_cont)
-        n_sediments = len(self.K_cont)
-        self.K_mar = convert_to_array(transportability_mar)[np.newaxis]
-        self.wave_base = wave_base
+        self.K_sed_cont = convert_to_array(erodibility_sed_cont)
+        n_sediments = len(self.K_sed_cont)
+        self.K_sed_mar = convert_to_array(erodibility_sed_mar)[np.newaxis]
         self._K_sed = np.zeros((n_nodes, 1, n_sediments))
+        self.settling_velocity = convert_to_array(settling_velocity)
+        self.wave_base = wave_base
         self.max_erosion_rate_sed = np.inf if max_erosion_rate_sed is None else max_erosion_rate_sed
-        self.max_erosion_rate_br = max_erosion_rate_br
-        self.active_layer_rate = max(max_erosion_rate_sed, max_erosion_rate_br) if active_layer_rate is None else active_layer_rate
+        self.active_layer_rate = max_erosion_rate_sed if active_layer_rate is None else active_layer_rate
+        self.K_br_cont = convert_to_array(erodibility_br_cont)
+        self.K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
+        self._K_br = np.zeros((n_nodes, 1, n_sediments))
         self.bedrock_composition = convert_to_array(bedrock_composition)
         self.m = exponent_discharge
         self.n = exponent_slope
@@ -225,11 +234,11 @@ class WaterDrivenDiffuser(Component):
             self._sediment_input = np.zeros((n_nodes, n_sediments))
         self._sediment_influx = np.zeros((n_nodes, n_sediments))
         self._sediment_outflux = np.zeros((n_nodes, n_receivers, n_sediments))
+        self._erosion_capacity_sed = np.zeros((n_nodes, n_receivers, n_sediments))
+        self._erosion_capacity_br = np.zeros((n_nodes, n_receivers, n_sediments))
         self._max_sediment_outflux = np.zeros((n_nodes, n_sediments))
         self._max_bedrock_outflux = np.zeros((n_nodes, n_sediments))
         self._sediment_rate = np.zeros((n_nodes, n_sediments))
-        self._active_layer = np.zeros((n_nodes, 1, n_sediments))
-        self._active_layer_thickness = np.zeros((n_nodes, 1, 1))
         self._active_layer_composition = np.zeros((n_nodes, 1, n_sediments))
 
     def _normalize_water_flux(self):
@@ -246,27 +255,39 @@ class WaterDrivenDiffuser(Component):
         Calculates the diffusivity coefficient of the sediments over the continental
         and marine domains.
         """
-        self._K_sed[self._bathymetry[:, 0] == 0.] = self.K_cont
-        self._K_sed[self._bathymetry[:, 0] > 0., 0] = self.K_mar*np.exp(-self._bathymetry[self._bathymetry[:, 0] > 0.]/self.wave_base)
+        self._K_sed[self._bathymetry[:, 0] == 0.] = self.K_sed_cont
+        self._K_sed[self._bathymetry[:, 0] > 0., 0] = self.K_sed_mar*np.exp(-self._bathymetry[self._bathymetry[:, 0] > 0.]/self.wave_base)
 
-    def _calculate_sediment_outflux(self, dt):
+    def _calculate_bedrock_diffusivity(self):
         """
-        Calculates the sediment outflux for multiple lithologies.
+        Calculates the diffusivity coefficient of the bedrock over the continental
+        and marine domains.
+        """
+        self._K_br[self._bathymetry[:, 0] == 0.] = self.K_br_cont
+        self._K_br[self._bathymetry[:, 0] > 0., 0] = self.K_br_mar*np.exp(-self._bathymetry[self._bathymetry[:, 0] > 0.]/self.wave_base)
+        self._K_br[self._grid.core_nodes][self._stratigraphy.thickness > 0.] = 0.
+
+    def _calculate_sediment_capacity(self, dt):
+        """
+        Calculates the erosion and transport capacities of sediments for multiple
+        lithologies.
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
-        self._active_layer[self._grid.core_nodes, 0] = self._stratigraphy.get_superficial_layer(self.active_layer_rate*dt)
-        self._active_layer_thickness[:] = np.sum(self._active_layer, axis=2, keepdims=True)
-        self._active_layer += self.bedrock_composition*(self.active_layer_rate*dt - self._active_layer_thickness)
-        self._active_layer[self._active_layer < 0.] = 0.
-        self._active_layer_thickness[:] = np.sum(self._active_layer, axis=2, keepdims=True)
-        self._active_layer_composition[:] = 0.
-        np.divide(self._active_layer, self._active_layer_thickness, out=self._active_layer_composition, where=self._active_layer_thickness > 0.)
+        self._active_layer_composition[self._grid.core_nodes, 0] = self._stratigraphy.get_superficial_composition(self.active_layer_rate*dt)
 
-        self._sediment_outflux[:] = self._K_sed * cell_area * self._active_layer_composition * (self._water_flux*self._flow_proportions)**self.m * self._slope**self.n
+        self._erosion_capacity_sed[:] = self._K_sed * cell_area * self._active_layer_composition * (self._water_flux*self._flow_proportions)**self.m * self._slope**self.n
+
+    def _calculate_bedrock_capacity(self):
+        """
+        Calculates the erosion capacity of the bedrock for multiple lithologies.
+        """
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+
+        self._erosion_capacity_br[:] = self._K_br * cell_area * self.bedrock_composition * (self._water_flux*self._flow_proportions)**self.m * self._slope**self.n
 
     def run_one_step(self, dt):
-        """Run the diffuser for one timestep, dt.
+        """Run the transporter for one timestep, dt.
 
         Parameters
         ----------
@@ -281,17 +302,25 @@ class WaterDrivenDiffuser(Component):
         self._normalize_water_flux()
 
         self._calculate_sediment_diffusivity()
-        self._calculate_sediment_outflux(dt)
+        self._calculate_bedrock_diffusivity()
+        self._calculate_sediment_capacity(dt)
+        self._calculate_bedrock_capacity()
         self._max_sediment_outflux[self._grid.core_nodes] = cell_area[core_nodes]*np.minimum(self.max_erosion_rate_sed, self._stratigraphy.class_thickness/dt)
-        self._max_bedrock_outflux[self._grid.core_nodes] = cell_area[core_nodes]*self.max_erosion_rate_br
+        # self._max_bedrock_outflux[self._grid.core_nodes] = cell_area[core_nodes]*self.max_erosion_rate_br
 
         self._sediment_influx[:] = self._sediment_input
-        calculate_sediment_influx(self._node_order,
+        self._sediment_outflux[:] = 0.
+        calculate_sediment_fluxes(self._node_order,
+                                  cell_area[:, 0],
                                   self._flow_receivers[..., 0],
+                                  self._water_flux[:, 0, 0],
+                                  self._flow_proportions[..., 0],
                                   self._sediment_influx,
                                   self._sediment_outflux,
+                                  self.settling_velocity,
+                                  self._erosion_capacity_sed,
+                                  self._erosion_capacity_br,
                                   self._max_sediment_outflux,
-                                  self._max_bedrock_outflux,
                                   dt)
 
         self._sediment_rate[core_nodes] = (self._sediment_influx[core_nodes] - np.sum(self._sediment_outflux[core_nodes], axis=1))/cell_area[core_nodes]

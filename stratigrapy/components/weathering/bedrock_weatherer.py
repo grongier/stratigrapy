@@ -68,6 +68,7 @@ class BedrockWeatherer(Component):
                  bedrock_composition=1.,
                  update=False,
                  update_time=False,
+                 update_compatible=False,
                  fields_to_track=None):
         """
         Parameters
@@ -90,6 +91,10 @@ class BedrockWeatherer(Component):
         update_time : bool, optional
             If false, time is updated when `update` is true; otherwise the original
             time of the layer is preserved.
+        update_compatible : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the bottom of the stack
+            only if the new layer is compatible with the existing layer.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -103,6 +108,7 @@ class BedrockWeatherer(Component):
         self.bedrock_composition = convert_to_array(bedrock_composition)
         self.update = update
         self.update_time = update_time
+        self.update_compatible = update_compatible
         self.fields_to_track = format_fields_to_track(fields_to_track)
 
         # Physical fields
@@ -141,8 +147,6 @@ class BedrockWeatherer(Component):
         self._weathering_thickness[:] = self.bedrock_composition*self._weathering_depth[core_nodes][:, np.newaxis]
 
         fields_to_track = {field: self._grid.at_node[field][core_nodes] for field in self.fields_to_track}
-        if self.update:
-            time = self._time if self.update_time else None
-            self._stratigraphy.update(0, self._weathering_thickness, time=time, **fields_to_track)
-        else:
-            self._stratigraphy.insert(self._weathering_thickness, time=self._time, **fields_to_track)
+        time = self._time if not self.update or (self.update and self.update_time) else None
+        self._stratigraphy.add(self._weathering_thickness, at_bottom=True, update=self.update,
+                               update_compatible=self.update_compatible, time=time, **fields_to_track)

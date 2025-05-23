@@ -39,19 +39,18 @@ ctypedef fused id_t:
 cpdef void calculate_sediment_influx(
     const id_t [:] node_order,
     const id_t [:, :] flow_receivers,
-    const cython.floating [:] cell_area,
-    const cython.floating [:, :, :] superficial_layer,
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
-    cython.floating [:, :, :] bedrock_outflux,
+    const cython.floating [:, :] max_sediment_outflux,
+    const cython.floating [:, :] max_bedrock_outflux,
     const double dt,
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
     cdef unsigned int n_receivers = flow_receivers.shape[1]
-    cdef unsigned int n_sediments = superficial_layer.shape[1]
+    cdef unsigned int n_sediments = sediment_outflux.shape[2]
     cdef unsigned int node, i, j, k
-    cdef double total_sediment_outflux, max_sediment_outflux
+    cdef double total_outflux, max_outflux
     cdef double ratio
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
@@ -65,55 +64,53 @@ cpdef void calculate_sediment_influx(
         # For each sediment class...
         for k in range(n_sediments):
 
-            # Compute the available sediments, i.e., the maximum sediment ouflux
-            max_sediment_outflux = sediment_influx[node, k] + (superficial_layer[node, k, 0] + superficial_layer[node, k, 1])*cell_area[node]/dt
-            if max_sediment_outflux > 0.:
-                # Compute the total sediment outflux
-                total_sediment_outflux = 0.
+            # Compute the available sediments, i.e., the maximum ouflux
+            max_outflux = sediment_influx[node, k] + max_sediment_outflux[node, k] + max_bedrock_outflux[node, k]
+            if max_outflux > 0.:
+                # Compute the total outflux
+                total_outflux = 0.
                 for j in range(n_receivers):
-                    total_sediment_outflux += sediment_outflux[node, j, k]
-                if total_sediment_outflux > 0.:
+                    total_outflux += sediment_outflux[node, j, k]
+                if total_outflux > 0.:
                     # Determine by how much the sediment outflux needs to be decreased
-                    ratio = max_sediment_outflux/total_sediment_outflux
+                    ratio = max_outflux/total_outflux
                     if ratio < 1.:
                         # Update the sediment outflux
                         for j in range(n_receivers):
                             sediment_outflux[node, j, k] *= ratio
-                # Determine the contribution from the sediments and the bedrock
-                ratio = superficial_layer[node, k, 1]*cell_area[node]/dt/max_sediment_outflux
-                # Update the bedrock outflux (only used to update the topography)
+                # Add the outflux to the influx of the downstream node(s)
                 for j in range(n_receivers):
-                    bedrock_outflux[node, j, k] = ratio*sediment_outflux[node, j, k]
+                    # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
+                    if flow_receivers[node, j] > -1:
+                        sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
             else:
                 for j in range(n_receivers):
                     sediment_outflux[node, j, k] = 0.
 
-            # Add the outflux to the influx of the downstream node(s)
-            for j in range(n_receivers):
-                # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
-                if flow_receivers[node, j] > -1:
-                    sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
-
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cpdef void calculate_linear_decline_sediment_influx(
+cpdef void calculate_sediment_fluxes(
     const id_t [:] node_order,
-    const id_t [:, :] flow_receivers,
     const cython.floating [:] cell_area,
-    const cython.floating [:, :] superficial_layer,
+    const id_t [:, :] flow_receivers,
+    const cython.floating [:] water_flux,
+    const cython.floating [:, :] flow_proportions,
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
-    cython.floating [:, :, :] bedrock_outflux,
+    const cython.floating [:] settling_velocity,
+    const cython.floating [:, :, :] erosion_capacity_sed,
+    const cython.floating [:, :, :] erosion_capacity_br,
+    const cython.floating [:, :] max_sediment_outflux,
     const double dt,
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
     cdef unsigned int n_receivers = flow_receivers.shape[1]
-    cdef unsigned int n_sediments = superficial_layer.shape[1]
+    cdef unsigned int n_sediments = sediment_outflux.shape[2]
     cdef unsigned int node, i, j, k
-    cdef double total_sediment_outflux, max_sediment_outflux, transport_capacity
-    cdef double ratio, decline
+    cdef double total_outflux, max_outflux
+    cdef double ratio
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
     # Because calculation of the outflux requires the influx, this operation
@@ -126,39 +123,35 @@ cpdef void calculate_linear_decline_sediment_influx(
         # For each sediment class...
         for k in range(n_sediments):
 
-            # Compute the available sediments, i.e., the maximum sediment ouflux
-            max_sediment_outflux = sediment_influx[node, k] + superficial_layer[node, k]*cell_area[node]/dt
-            if max_sediment_outflux > 0.:
-                # Compute the total sediment outflux, i.e., the transport capacity
-                transport_capacity = 0.
+            # Compute the available sediments, i.e., the maximum ouflux
+            max_outflux = sediment_influx[node, k] + max_sediment_outflux[node, k]
+            for j in range(n_receivers):
+                max_outflux += erosion_capacity_br[node, j, k]
+            if max_outflux > 0.:
+                # Compute the sediment outflux
                 for j in range(n_receivers):
-                    transport_capacity += sediment_outflux[node, j, k]
-                if transport_capacity > 0.:
+                    if flow_proportions[node, j]*water_flux[node] > 0.:
+                        # This applies the formula for sediment outlfux from
+                        # Shobe et al. (2017) to each receiver independantly by
+                        # assuming that the sediment influx is divided between
+                        # each receiver in the same proportions than the water
+                        # flux, which might not be the correct appraoch
+                        sediment_outflux[node, j, k] = flow_proportions[node, j]*sediment_influx[node, k] + erosion_capacity_sed[node, j, k] + erosion_capacity_br[node, j, k]
+                        sediment_outflux[node, j, k] /= 1. + settling_velocity[k]*cell_area[node]/(flow_proportions[node, j]*water_flux[node])
+                # Compute the total outflux
+                total_outflux = 0.
+                for j in range(n_receivers):
+                    total_outflux += sediment_outflux[node, j, k]
+                if total_outflux > 0.:
                     # Determine by how much the sediment outflux needs to be decreased
-                    ratio = max_sediment_outflux/transport_capacity
+                    ratio = max_outflux/total_outflux
                     if ratio < 1.:
                         # Update the sediment outflux
                         for j in range(n_receivers):
                             sediment_outflux[node, j, k] *= ratio
-                    # Compute the linear decline for bedrock erodibility
-                    total_sediment_outflux = 0.
-                    for j in range(n_receivers):
-                        total_sediment_outflux += sediment_outflux[node, j, k]
-                    decline = 1. - total_sediment_outflux/transport_capacity
-                else:
-                    decline = 1.
-            else:
+
+                # Add the outflux to the influx of the downstream node(s)
                 for j in range(n_receivers):
-                    sediment_outflux[node, j, k] = 0.
-                decline = 1.
-
-            # Update the bedrock outflux (only used to update the topography)
-            for j in range(n_receivers):
-                bedrock_outflux[node, j, k] = decline*bedrock_outflux[node, j, k]
-                sediment_outflux[node, j, k] += bedrock_outflux[node, j, k]
-
-            # Add the outflux to the influx of the downstream node(s)
-            for j in range(n_receivers):
-                # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
-                if flow_receivers[node, j] > -1:
-                    sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
+                    # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
+                    if flow_receivers[node, j] > -1:
+                        sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]

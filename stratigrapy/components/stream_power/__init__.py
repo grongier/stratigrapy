@@ -1,4 +1,4 @@
 from .water_driven_diffuser import WaterDrivenDiffuser
-from .linear_decline_transporter import LinearDeclineTransporter
+from .water_driven_displacer import WaterDrivenDisplacer
 
-__all__ = ["WaterDrivenDiffuser", "LinearDeclineTransporter"]
+__all__ = ["WaterDrivenDiffuser", "WaterDrivenDisplacer"]
