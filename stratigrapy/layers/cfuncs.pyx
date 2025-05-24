@@ -98,7 +98,7 @@ def get_surface_index(
 def get_superficial_layer(
     const cython.floating [:, :, :] layers,
     long bottom_index,
-    long top_index,
+    const id_t [:] surface_index,
     const cython.floating [:] dz,
     cython.floating [:, :] superficial_layer,
 ):
@@ -116,7 +116,7 @@ def get_superficial_layer(
         for col in range(n_stacks):
             superficial_layer_thickness = dz[col]
             thickness = 0.
-            for layer in range(top_index, bottom_index - 1, -1):
+            for layer in range(surface_index[col], bottom_index - 1, -1):
                 for cla in range(n_classes):
                     superficial_layer[col, cla] += layers[layer, col, cla]
                     thickness += layers[layer, col, cla]

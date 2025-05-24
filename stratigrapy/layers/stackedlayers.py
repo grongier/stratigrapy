@@ -25,7 +25,7 @@
 
 import os
 import numpy as np
-from landlab.layers.eventlayers import _reduce_matrix, _BlockSlice, _valid_keywords_or_raise, _allocate_layers_for
+from landlab.layers.eventlayers import _reduce_matrix, _valid_keywords_or_raise, _allocate_layers_for
 
 from .cfuncs import deposit_or_erode, get_surface_index, get_superficial_layer
 
@@ -74,6 +74,98 @@ def _get_superficial_layer(layers, bottom_index, top_index, dz, superficial_laye
     get_superficial_layer(layers, bottom_index, top_index, dz, superficial_layer)
 
 
+class _BlockSlice:
+    """Slices that divide a matrix into equally sized blocks."""
+
+    def __init__(self, *args):
+        """_BlockSlice([start], stop, [step])"""
+        if len(args) > 3:
+            raise TypeError(
+                f"_BlockSlice expected at most 3 arguments, got {len(args)}"
+            )
+
+        self._args = tuple(args)
+
+        self._start = 0
+        self._stop = None
+        self._step = None
+
+        if len(args) == 1:
+            self._stop = args[0]
+        elif len(args) == 2:
+            self._start, self._stop = args
+        elif len(args) == 3:
+            self._start, self._stop, self._step = args
+
+        if self._stop is not None and self._stop < self._start:
+            raise ValueError(
+                "stop ({}) must be greater than start ({})".format(
+                    self._stop, self._start
+                )
+            )
+
+    def __repr__(self):
+        return "_BlockSlice({})".format(", ".join([repr(arg) for arg in self._args]))
+
+    @property
+    def start(self):
+        return self._start
+
+    @property
+    def stop(self):
+        return self._stop
+
+    @property
+    def step(self):
+        return self._step
+
+    def indices(self, n_rows):
+        """Row indices to blocks within a matrix.
+
+        Parameters
+        ----------
+        n_rows : int
+            The number of rows in the matrix.
+
+        Returns
+        -------
+        (start, stop, step)
+            Tuple of (int* that gives the row of the first block, row of the
+            last block, and the number of rows in each block.
+
+        Examples
+        --------
+        >>> from landlab.layers.eventlayers import _BlockSlice
+
+        The default is one single block that encomapses all the rows.
+
+        >>> _BlockSlice().indices(4)
+        (0, 4, 4)
+
+        >>> _BlockSlice(3).indices(4)
+        (0, 3, 3)
+
+        >>> _BlockSlice(1, 3).indices(4)
+        (1, 3, 2)
+
+        >>> _BlockSlice(1, 7, 2).indices(8)
+        (1, 7, 2)
+        """
+        start, stop, step = self.start, self.stop, self.step
+        if stop is None:
+            stop = n_rows
+
+        start, stop, _ = slice(start, stop).indices(n_rows)
+
+        if step is None:
+            step = stop - start
+
+        if step != 0 and (stop - start) % step != 0:
+            stop = (stop - start) // step * step + start
+
+        return start, stop, step
+
+
 def resize_array(array, left_new_cap, right_new_cap):
     """Increase the size of an array, leaving room to grow.
 
@@ -111,7 +203,8 @@ class StackedLayersMixIn:
     """MixIn that adds a StackedLayers attribute to a ModelGrid."""
 
     def __init__(self, number_of_classes, initial_allocation, new_allocation,
-                 number_of_layers_to_fuse, number_of_top_layers, remove_empty_layers):
+                 number_of_layers_to_fuse, number_of_top_layers, fuse_continuously,
+                 remove_empty_layers):
         """Instantiates the member variables of the StackedLayersMixIn.
 
         Parameters
@@ -133,6 +226,10 @@ class StackedLayersMixIn:
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional
             Number of layers at the top of the stack to ignore when calling `fuse`.
+        fuse_continuously : bool, optional
+            If True, fuse the layers as they are added; otherwise, wait until the
+            number of unfused layers reaches `number_of_layers_to_fuse` (excluding
+            the top layers) to fuse them.
         remove_empty_layers : bool, optional
             If True, remove the layers without any deposits at the top of the stack
             when adding a layer; otherwise, keep all the layers.
@@ -142,6 +239,7 @@ class StackedLayersMixIn:
         self.new_allocation = new_allocation
         self.number_of_layers_to_fuse = number_of_layers_to_fuse
         self.number_of_top_layers = number_of_top_layers
+        self.fuse_continuously = fuse_continuously
         self.remove_empty_layers = remove_empty_layers
 
     @property
@@ -156,6 +254,7 @@ class StackedLayersMixIn:
                                                  self.new_allocation,
                                                  self.number_of_layers_to_fuse,
                                                  self.number_of_top_layers,
+                                                 self.fuse_continuously,
                                                  self.remove_empty_layers)
         return self._stacked_layers
 
@@ -191,6 +290,10 @@ class StackedLayers:
         Number of layers to merge together when calling `fuse`.
     number_of_top_layers : int, optional
         Number of layers at the top of the stack to ignore when calling `fuse`.
+    fuse_continuously : bool, optional
+        If True, fuse the layers as they are added; otherwise, wait until the
+        number of unfused layers reaches `number_of_layers_to_fuse` (excluding
+        the top layers) to fuse them.
     remove_empty_layers : bool, optional
         If True, remove the layers without any deposits at the top of the stack
         when adding a layer; otherwise, keep all the layers.
@@ -204,6 +307,7 @@ class StackedLayers:
         new_allocation=1,
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
+        fuse_continuously=True,
         remove_empty_layers=False,
     ):
         super().__init__()
@@ -220,7 +324,9 @@ class StackedLayers:
 
         self.number_of_layers_to_fuse = number_of_layers_to_fuse
         self.number_of_top_layers = number_of_top_layers
+        self.fuse_continuously = fuse_continuously
         self._number_of_fused_layers = 0
+        self._number_of_sublayers = 0
 
         dims = (self.number_of_layers, self.number_of_stacks, self.number_of_classes)
         self._attrs["_dz"] = np.empty(dims, dtype=float)
@@ -265,8 +371,9 @@ class StackedLayers:
         )
 
     def __repr__(self):
-        return self.__class__.__name__ + "({number_of_stacks})".format(
-            number_of_stacks=self.number_of_stacks
+        return self.__class__.__name__ + "({number_of_stacks}, {number_of_classes})".format(
+            number_of_stacks=self.number_of_stacks,
+            number_of_classes=self.number_of_classes,
         )
 
     @property
@@ -298,6 +405,15 @@ class StackedLayers:
         of shape `(number_of_stacks, )`.
         """
         return np.sum(self.dz, axis=(0, 2))
+
+    @property
+    def class_thickness(self):
+        """Total thickness of the columns for each class.
+
+        The sum of all layer thicknesses for each stack as an array
+        of shape `(number_of_stacks, number_of_classes)`.
+        """
+        return np.sum(self.dz, axis=0)
 
     @property
     def layer_thickness(self):
@@ -388,7 +504,7 @@ class StackedLayers:
         else:
             is_compatible = False
 
-        if update == False or (update == False and is_compatible == False):
+        if update == False and is_compatible == False:
             self._add_empty_layer(at_bottom=at_bottom)
 
         layer = self._first_layer
@@ -454,7 +570,13 @@ class StackedLayers:
         n_blocks = (stop - start) // step
         n_removed = n_blocks * (step - 1)
         for name, array in self._attrs.items():
-            middle = _reduce_matrix(array[start:stop], step, kwds.get(name, np.sum))
+            reducer = kwds.get(name, np.sum)
+            # TODO: See if that can be removed
+            if self.fuse_continuously == True and reducer == np.mean and stop - start == 2:
+                factor = np.array([[self._number_of_sublayers], [1]])
+                middle = _reduce_matrix(factor*array[start:stop], step, np.sum)/(self._number_of_sublayers + 1.)
+            else:
+                middle = _reduce_matrix(array[start:stop], step, reducer)
             top = array[stop : self._first_layer + self._number_of_layers]
 
             array[start : start + n_blocks] = middle
@@ -464,18 +586,47 @@ class StackedLayers:
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
 
-    def fuse(self, **kwds):
+    def fuse(self, finalize=False, **kwds):
         """Fuse layers to save computational resources during runtime. Layers
         are fused together based on `number_of_layers_to_fuse` and, once fused,
         are not fused again. The top layers defined by `number_of_top_layers`
         are not fused.
+
+        Parameters
+        ----------
+        finalize : bool, optional
+            If True, all the layers are fused, including the top layers defined
+            by `number_of_top_layers`; otherwise, the top layers are ignored.
         """
         start_fuse = self._number_of_fused_layers
-        stop_fuse = self._number_of_layers - self.number_of_top_layers
-        if stop_fuse > start_fuse:
-            prev_number_of_layers = self._number_of_layers
-            self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
-            self._number_of_fused_layers = self._number_of_fused_layers + prev_number_of_layers - self._number_of_layers
+        stop_fuse = self._number_of_layers
+
+        if finalize == False:
+            stop_fuse -= self.number_of_top_layers
+            # TODO: The original idea was to handle layer addition and update in
+            # here rather than in individual components, but this is getting
+            # complicated and inefficient (why add a layer and fuse it with
+            # the previous one instead of just updating the previous one?)
+            if self.fuse_continuously == False and stop_fuse - start_fuse >= self.number_of_layers_to_fuse:
+                self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
+                self._number_of_fused_layers += (stop_fuse - start_fuse)//self.number_of_layers_to_fuse
+            elif self.fuse_continuously == True and stop_fuse > start_fuse:
+                self.reduce(start_fuse, stop_fuse, **kwds)
+                # TODO: Doing it here means that fuse needs to be called
+                # multiple times when multiple components are used to get the
+                # proper behavior
+                self._number_of_sublayers += 1
+                if self._number_of_sublayers == self.number_of_layers_to_fuse:
+                    self._number_of_sublayers = 0
+                    self._number_of_fused_layers += 1                    
+        else:
+            if stop_fuse - start_fuse > self.number_of_layers_to_fuse:
+                self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
+                self._number_of_fused_layers += (stop_fuse - start_fuse)//self.number_of_layers_to_fuse
+                start_fuse = self._number_of_fused_layers
+                stop_fuse = self._number_of_layers
+            self.reduce(start_fuse, stop_fuse, **kwds)
+            self._number_of_fused_layers += 1
 
     @property
     def surface_index(self):
@@ -487,6 +638,17 @@ class StackedLayers:
         """Values of a field on the surface layer.
         """
         return self._attrs[name][self.surface_index, np.arange(self._number_of_stacks)]
+
+    def get_surface_composition(self):
+        """Composition of the surface layer (i.e., proportion of each class).
+        """
+        surface = self.get_surface_values('_dz')
+        thickness = np.sum(surface, axis=1, keepdims=True)
+
+        composition = np.zeros_like(surface)
+        np.divide(surface, thickness, out=composition, where=thickness > 0.)
+
+        return composition
 
     def get_superficial_layer(self, dz):
         """Get the thicknesses of all classes in a superficial layer defined by
@@ -504,10 +666,31 @@ class StackedLayers:
         """
         superficial_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
         _get_superficial_layer(self._attrs["_dz"], self._first_layer,
-                               self._first_layer + self.number_of_layers - 1,
-                               dz, superficial_layer)
+                               self._surface_index, dz, superficial_layer)
 
         return superficial_layer
+
+    def get_superficial_composition(self, dz):
+        """Get the composition of all classes in a superficial layer defined by
+        its thickness from the surface `dz`.
+
+        Parameters
+        ----------
+        dz : float or array_like
+            Thickness from the surface of the superficial layer.
+
+        Returns
+        -------
+        superficial_composition
+            The composition of material from each class within the superficial layer.
+        """
+        superficial_layer = self.get_superficial_layer(dz)
+        thickness = np.sum(superficial_layer, axis=1, keepdims=True)
+
+        composition = np.zeros_like(superficial_layer)
+        np.divide(superficial_layer, thickness, out=composition, where=thickness > 0.)
+
+        return composition
 
     def _add_empty_layer(self, at_bottom=False):
         """Add a new empty layer to the stacks.
@@ -552,6 +735,9 @@ class StackedLayers:
         bool
             ``True`` if the new layer is compatible, otherwise ``False``.
         """
+        if isinstance(dz, np.ndarray) == True and dz.ndim == 2:
+            dz = np.sum(dz, axis=1)
+
         where_deposition = dz > 0.0
 
         if np.any(where_deposition):
@@ -563,7 +749,7 @@ class StackedLayers:
                     f" {', '.join(sorted(repr(t) for t in set(self)))}"
                 )
             for name in kwds:
-                is_compatible = self[name][self.surface_index] == kwds[name]
+                is_compatible = self[name][-1] == kwds[name]
 
                 if not np.all(is_compatible[where_deposition]):
                     return False
