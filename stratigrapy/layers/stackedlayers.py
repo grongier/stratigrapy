@@ -504,7 +504,7 @@ class StackedLayers:
         else:
             is_compatible = False
 
-        if update == False and is_compatible == False:
+        if (update == False and is_compatible == False) or (update == True and self.number_of_layers == 0):
             self._add_empty_layer(at_bottom=at_bottom)
 
         layer = self._first_layer

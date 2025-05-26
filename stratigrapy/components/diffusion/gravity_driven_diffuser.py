@@ -24,15 +24,14 @@
 
 
 import numpy as np
-from landlab import Component
 
-from ...utils import convert_to_array, format_fields_to_track
+from .._base import _BaseDiffuser
 
 
 ################################################################################
 # Component
 
-class GravityDrivenDiffuser(Component):
+class GravityDrivenDiffuser(_BaseDiffuser):
     """Gravity-driven diffusion of a Landlab field in continental and marine domains.
 
     References
@@ -47,27 +46,6 @@ class GravityDrivenDiffuser(Component):
 
     _name = "GravityDrivenDiffuser"
 
-    _unit_agnostic = True
-
-    _info = {
-        "bathymetric__depth": {
-            "dtype": float,
-            "intent": "in",
-            "optional": False,
-            "units": "-",
-            "mapping": "node",
-            "doc": "The water depth under the sea",
-        },
-        "topographic__elevation": {
-            "dtype": float,
-            "intent": "inout",
-            "optional": False,
-            "units": "m",
-            "mapping": "node",
-            "doc": "Land surface topographic elevation",
-        },
-    }
-
     def __init__(
         self,
         grid,
@@ -77,7 +55,6 @@ class GravityDrivenDiffuser(Component):
         max_erosion_rate=0.01,
         active_layer_rate=None,
         exponent_slope=1.,
-        update_compatible=False,
         fields_to_track=None,
     ):
         """
@@ -103,53 +80,27 @@ class GravityDrivenDiffuser(Component):
             by the maximum erosion rate.
         exponent_slope : float (-)
             The exponent for the slope.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid)
-
-        # Parameters
-        n_nodes = grid.number_of_nodes
-        self.K_cont = convert_to_array(diffusivity_cont)
-        n_sediments = len(self.K_cont)
-        self.K_mar = convert_to_array(diffusivity_mar)
-        self.wave_base = wave_base
-        self._K_sed = np.zeros((n_nodes, 1, n_sediments))
-        self.max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
-        self.active_layer_rate = max_erosion_rate if active_layer_rate is None else active_layer_rate
-        self.n = exponent_slope
-        self.update_compatible = update_compatible
-        self.fields_to_track = format_fields_to_track(fields_to_track)
-
-        # Physical fields
-        self._topography = grid.at_node['topographic__elevation']
-        self._stratigraphy = grid.stacked_layers
-        if self._stratigraphy.number_of_layers == 0:
-            _fields_to_track = {field: grid.at_node[field][grid.core_nodes] for field in self.fields_to_track}
-            self._stratigraphy.add(0., time=0., **_fields_to_track)
-        self._bathymetry = grid.at_node['bathymetric__depth'][:, np.newaxis]
-        self._time = 0.
-
-        # Field for the steepest slope
-        self._link_lengths = grid.length_of_link
         self._neighbors = grid.active_adjacent_nodes_at_node
         n_neighbors = self._neighbors.shape[1]
+
+        super().__init__(grid, diffusivity_cont, diffusivity_mar, wave_base,
+                         n_neighbors, max_erosion_rate, active_layer_rate,
+                         exponent_slope, fields_to_track)
+
+        # Field for the steepest slope
+        n_nodes = grid.number_of_nodes
+        self._link_lengths = grid.length_of_link
         self._links_to_neighbors = grid.links_at_node
         self._slope = np.zeros((n_nodes, n_neighbors, 1))
 
         # Fields for sediment fluxes
-        self._sediment_influx = np.zeros((n_nodes, n_sediments))
-        self._sediment_outflux = np.zeros((n_nodes, n_neighbors, n_sediments))
+        n_sediments = self._K_sed.shape[2]
         self._total_sediment_outflux = np.zeros((n_nodes, 1, n_sediments))
-        self._max_sediment_outflux = np.zeros((n_nodes, 1, n_sediments))
         self._ratio = np.zeros((n_nodes, 1, n_sediments))
-        self._sediment_rate = np.zeros((n_nodes, n_sediments))
-        self._active_layer_composition = np.zeros((n_nodes, 1, n_sediments))
 
     def _calculate_slopes(self):
         """
@@ -158,14 +109,6 @@ class GravityDrivenDiffuser(Component):
         self._slope[..., 0] = (self._topography[:, np.newaxis] - self._topography[self._neighbors])/self._link_lengths[self._links_to_neighbors]
         self._slope[self._neighbors == -1] = 0.
         self._slope[self._slope < 0.] = 0.
-
-    def _calculate_sediment_diffusivity(self):
-        """
-        Calculates the diffusivity coefficient of the sediments over the continental
-        and marine domains.
-        """
-        self._K_sed[self._bathymetry[:, 0] == 0.] = self.K_cont
-        self._K_sed[self._bathymetry[:, 0] > 0., 0] = self.K_mar*np.exp(-self._bathymetry[self._bathymetry[:, 0] > 0.]/self.wave_base)
 
     def _calculate_sediment_outflux(self, dt):
         """
@@ -198,19 +141,21 @@ class GravityDrivenDiffuser(Component):
         self._sediment_influx[:] = 0.
         np.add.at(self._sediment_influx, self._neighbors, self._sediment_outflux)
 
-    def run_one_step(self, dt):
+    def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the diffuser for one timestep, dt.
 
         Parameters
         ----------
         dt : float (time)
             The imposed timestep.
+        update_compatible : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the top of the stack only
+            if the new layer is compatible with the existing layer.
+        update : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer.
         """
-        core_nodes = self._grid.core_nodes
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
-
-        self._time += dt
-
         self._calculate_slopes()
         self._calculate_sediment_diffusivity()
         self._calculate_sediment_outflux(dt)
@@ -218,7 +163,4 @@ class GravityDrivenDiffuser(Component):
 
         self._calculate_sediment_influx()
 
-        self._sediment_rate[core_nodes] = (self._sediment_influx[core_nodes] - np.sum(self._sediment_outflux[core_nodes], axis=1))/cell_area[core_nodes]
-        fields_to_track = {field: self._grid.at_node[field][core_nodes] for field in self.fields_to_track}
-        self._stratigraphy.add(self._sediment_rate[core_nodes]*dt, update_compatible=self.update_compatible, time=self._time, **fields_to_track)
-        self._topography[core_nodes] += np.sum(self._sediment_rate[core_nodes], axis=1)*dt
+        self._apply_fluxes(dt, update_compatible, update)

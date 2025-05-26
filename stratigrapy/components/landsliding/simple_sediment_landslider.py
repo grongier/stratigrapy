@@ -24,9 +24,9 @@
 
 
 import numpy as np
-from landlab import Component
 from landlab import RasterModelGrid
 
+from .._base import _BaseDisplacer
 from ...utils import convert_to_array, format_fields_to_track
 from .cfuncs import calculate_sediment_influx
 
@@ -34,7 +34,7 @@ from .cfuncs import calculate_sediment_influx
 ################################################################################
 # Component
 
-class SimpleSedimentLandslider(Component):
+class SimpleSedimentLandslider(_BaseDisplacer):
     """Simple slope failure and mass flows of sediments in a StackedLayers.
 
     References
@@ -65,14 +65,6 @@ class SimpleSedimentLandslider(Component):
             "mapping": "node",
             "doc": "Node array of receivers (node that receives flow from current node)",
         },
-        "bathymetric__depth": {
-            "dtype": float,
-            "intent": "in",
-            "optional": False,
-            "units": "-",
-            "mapping": "node",
-            "doc": "The water depth under the sea",
-        },
         "topographic__elevation": {
             "dtype": float,
             "intent": "inout",
@@ -89,6 +81,14 @@ class SimpleSedimentLandslider(Component):
             "mapping": "node",
             "doc": "The steepest *downhill* slope",
         },
+        "bathymetric__depth": {
+            "dtype": float,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "The water depth under the sea",
+        },
     }
 
     def __init__(
@@ -97,7 +97,6 @@ class SimpleSedimentLandslider(Component):
         repose_angle_cont=2.,
         repose_angle_mar=2.,
         active_layer_rate=1e-2,
-        update_compatible=False,
         fields_to_track=None,
     ):
         """
@@ -116,35 +115,24 @@ class SimpleSedimentLandslider(Component):
             the composition of the transported sediments. Erosion is not limited
             to that layer. If None, the entire layer of sediments is used as
             active layer.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid)
-
-        # Parameters
-        n_nodes = grid.number_of_nodes
         self.repose_angle_cont = convert_to_array(repose_angle_cont)
         n_sediments = len(self.repose_angle_cont)
+
+        super().__init__(grid, n_sediments, 1, active_layer_rate, active_layer_rate,
+                         fields_to_track)
+
+        # Parameters
         self.repose_angle_mar = convert_to_array(repose_angle_mar)
-        self.active_layer_rate = np.inf if active_layer_rate is None else active_layer_rate
-        self.update_compatible = update_compatible
-        self.fields_to_track = format_fields_to_track(fields_to_track)
 
         # Physical fields
-        self._topography = grid.at_node['topographic__elevation']
-        self._stratigraphy = grid.stacked_layers
-        if self._stratigraphy.number_of_layers == 0:
-            _fields_to_track = {field: grid.at_node[field][grid.core_nodes] for field in self.fields_to_track}
-            self._stratigraphy.add(0., time=0., **_fields_to_track)
-        self._bathymetry = grid.at_node['bathymetric__depth']
-        self._time = 0.
+        self._bathymetry = self._bathymetry[:, 0]
 
         # Field for the steepest slope
+        n_nodes = grid.number_of_nodes
         if isinstance(grid, RasterModelGrid):
             self._link_lengths = grid.length_of_d8
         else:
@@ -165,10 +153,6 @@ class SimpleSedimentLandslider(Component):
         self._repose_angle = np.zeros((n_nodes, n_sediments))
         self._repose_slope = np.zeros((n_nodes, 1))
         self._slope_difference = np.zeros((n_nodes, 1))
-        self._sediment_influx = np.zeros((n_nodes, n_sediments))
-        self._sediment_outflux = np.zeros((n_nodes, n_sediments))
-        self._max_sediment_outflux = np.zeros((n_nodes, n_sediments))
-        self._sediment_rate = np.zeros((n_nodes, n_sediments))
         self._active_layer_composition = np.zeros((n_nodes, n_sediments))
 
     def _calculate_sediment_repose_angle(self):
@@ -193,7 +177,7 @@ class SimpleSedimentLandslider(Component):
         self._repose_slope[:] = np.arctan(np.deg2rad(np.sum(self._repose_angle*self._active_layer_composition, axis=1, keepdims=True)))
         self._slope_difference[:] = self._steepest_slope - self._repose_slope
         self._slope_difference[self._slope_difference < 0.] = 0.
-        self._sediment_outflux[:] = self._active_layer_composition*self._slope_difference*self._link_lengths[self._steepest_link]*cell_area/dt
+        self._sediment_outflux[:, 0] = self._active_layer_composition*self._slope_difference*self._link_lengths[self._steepest_link]*cell_area/dt
 
     def _threshold_sediment_outflux(self, dt):
         """
@@ -202,22 +186,24 @@ class SimpleSedimentLandslider(Component):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._max_sediment_outflux[self._grid.core_nodes] = self._stratigraphy.class_thickness*cell_area[self._grid.core_nodes]/dt
+        self._max_sediment_outflux[self._grid.core_nodes, 0] = self._stratigraphy.class_thickness*cell_area[self._grid.core_nodes]/dt
         self._sediment_outflux[self._sediment_outflux > self._max_sediment_outflux] = self._max_sediment_outflux[self._sediment_outflux > self._max_sediment_outflux]
 
-    def run_one_step(self, dt):
+    def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the landslider for one timestep, dt.
 
         Parameters
         ----------
         dt : float (time)
             The imposed timestep.
+        update_compatible : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the top of the stack only
+            if the new layer is compatible with the existing layer.
+        update : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer.
         """
-        core_nodes = self._grid.core_nodes
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
-
-        self._time += dt
-
         self._calculate_sediment_repose_angle()
         self._calculate_sediment_outflux(dt)
         self._threshold_sediment_outflux(dt)
@@ -227,14 +213,11 @@ class SimpleSedimentLandslider(Component):
         calculate_sediment_influx(self._node_order,
                                   np.take_along_axis(self._flow_receivers, self._steepest_receivers, axis=1)[:, 0],
                                   self._link_lengths[self._steepest_link][:, 0],
-                                  cell_area[:, 0],
+                                  self._grid.cell_area_at_node,
                                   self._steepest_slope[:, 0],
                                   self._repose_angle,
                                   self._sediment_influx,
-                                  self._sediment_outflux,
+                                  self._sediment_outflux[:, 0],
                                   dt)
 
-        self._sediment_rate[core_nodes] = (self._sediment_influx[core_nodes] - self._sediment_outflux[core_nodes])/cell_area[core_nodes]
-        fields_to_track = {field: self._grid.at_node[field][core_nodes] for field in self.fields_to_track}
-        self._stratigraphy.add(self._sediment_rate[core_nodes]*dt, update_compatible=self.update_compatible, time=self._time, **fields_to_track)
-        self._topography[core_nodes] += np.sum(self._sediment_rate[core_nodes], axis=1)*dt
+        self._apply_fluxes(dt, update_compatible, update)

@@ -99,8 +99,8 @@ cpdef void calculate_sediment_fluxes(
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
     const cython.floating [:] settling_velocity,
-    const cython.floating [:, :, :] erosion_capacity_sed,
-    const cython.floating [:, :, :] erosion_capacity_br,
+    const cython.floating [:, :, :] erosion_flux_sed,
+    const cython.floating [:, :, :] erosion_flux_br,
     const cython.floating [:, :] max_sediment_outflux,
     const double dt,
 ) noexcept nogil:
@@ -126,7 +126,7 @@ cpdef void calculate_sediment_fluxes(
             # Compute the available sediments, i.e., the maximum ouflux
             max_outflux = sediment_influx[node, k] + max_sediment_outflux[node, k]
             for j in range(n_receivers):
-                max_outflux += erosion_capacity_br[node, j, k]
+                max_outflux += erosion_flux_br[node, j, k]
             if max_outflux > 0.:
                 # Compute the sediment outflux
                 for j in range(n_receivers):
@@ -136,7 +136,7 @@ cpdef void calculate_sediment_fluxes(
                         # assuming that the sediment influx is divided between
                         # each receiver in the same proportions than the water
                         # flux, which might not be the correct appraoch
-                        sediment_outflux[node, j, k] = flow_proportions[node, j]*sediment_influx[node, k] + erosion_capacity_sed[node, j, k] + erosion_capacity_br[node, j, k]
+                        sediment_outflux[node, j, k] = flow_proportions[node, j]*sediment_influx[node, k] + erosion_flux_sed[node, j, k] + erosion_flux_br[node, j, k]
                         sediment_outflux[node, j, k] /= 1. + settling_velocity[k]*cell_area[node]/(flow_proportions[node, j]*water_flux[node])
                 # Compute the total outflux
                 total_outflux = 0.
