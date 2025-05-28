@@ -52,6 +52,7 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         diffusivity_cont=0.01,
         diffusivity_mar=0.001,
         wave_base=20.,
+        porosity=0.,
         max_erosion_rate=0.01,
         active_layer_rate=None,
         exponent_slope=1.,
@@ -70,6 +71,11 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies. When computing the active layer, this porosity
+            is used unless the field 'sediment__porosity' is being tracked in
+            the stratigraphy.
         max_erosion_rate : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
@@ -87,8 +93,8 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         self._neighbors = grid.active_adjacent_nodes_at_node
         n_neighbors = self._neighbors.shape[1]
 
-        super().__init__(grid, diffusivity_cont, diffusivity_mar, wave_base,
-                         n_neighbors, max_erosion_rate, active_layer_rate,
+        super().__init__(grid, n_neighbors, diffusivity_cont, diffusivity_mar,
+                         wave_base, porosity, max_erosion_rate, active_layer_rate,
                          exponent_slope, fields_to_track)
 
         # Field for the steepest slope
@@ -116,7 +122,8 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
-        self._active_layer_composition[self._grid.core_nodes, 0] = self._stratigraphy.get_superficial_composition(self.active_layer_rate*dt)
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._active_layer_composition[self._grid.core_nodes, 0] = self._stratigraphy.get_active_composition(self.active_layer_rate*dt, porosity)
 
         self._sediment_outflux[:] = self._K_sed * cell_area * self._active_layer_composition * self._slope**self.n
 
@@ -127,7 +134,9 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[self._grid.core_nodes]*np.minimum(self.max_erosion_rate, self._stratigraphy.class_thickness/dt)
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[self._grid.core_nodes]*np.minimum((1. - self.porosity)*self.max_erosion_rate,
+                                                                                                           self._stratigraphy.get_class_thickness(porosity)/dt)
         self._total_sediment_outflux[:] = np.sum(self._sediment_outflux, axis=1, keepdims=True)
         self._ratio[:] = 0.
         np.divide(self._max_sediment_outflux, self._total_sediment_outflux, out=self._ratio, where=self._total_sediment_outflux > 0.)

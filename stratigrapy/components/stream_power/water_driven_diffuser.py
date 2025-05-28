@@ -43,6 +43,9 @@ class WaterDrivenDiffuser(_BaseStreamPower):
     Granjeon, D., & Joseph, P. (1999)
         Concepts and applications of a 3-D multiple lithology, diffusive model in stratigraphic modeling
         https://doi.org/10.2110/pec.99.62.0197
+    Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
+        The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
+        https://doi.org/10.5194/gmd-10-4577-2017
     """
 
     _name = "WaterDrivenDiffuser"
@@ -53,6 +56,8 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         transportability_cont=1e-5,
         transportability_mar=1e-6,
         wave_base=20.,
+        critical_flux=0.,
+        porosity=0.,
         max_erosion_rate_sed=1e-2,
         max_erosion_rate_br=1e-2,
         active_layer_rate=1e-2,
@@ -75,6 +80,14 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             or multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
+        critical_flux : float or array-like (m3/time)
+            Critical sediment flux to start displace sediments in the stream
+            power law.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies. When computing the active layer, this porosity
+            is used unless the field 'sediment__porosity' is being tracked in
+            the stratigraphy.
         max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
@@ -102,8 +115,9 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             each iteration.
         """
         super().__init__(grid, transportability_cont, transportability_mar, wave_base,
-                         max_erosion_rate_sed, active_layer_rate, bedrock_composition,
-                         exponent_discharge, exponent_slope, ref_water_flux, fields_to_track)
+                         critical_flux, porosity, max_erosion_rate_sed, active_layer_rate,
+                         bedrock_composition, exponent_discharge, exponent_slope,
+                         ref_water_flux, fields_to_track)
 
         # Parameters
         self.max_erosion_rate_br = max_erosion_rate_br
@@ -122,15 +136,18 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
-        self._active_layer[self._grid.core_nodes, 0] = self._stratigraphy.get_superficial_layer(self.active_layer_rate*dt)
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._active_layer[self._grid.core_nodes, 0] = self._stratigraphy.get_active_layer(self.active_layer_rate*dt, porosity)
         self._active_layer_thickness[:] = np.sum(self._active_layer, axis=2, keepdims=True)
-        self._active_layer += self.bedrock_composition*(self.active_layer_rate*dt - self._active_layer_thickness)
+        self._active_layer += self.bedrock_composition*((1. - self.porosity)*self.active_layer_rate*dt - self._active_layer_thickness)
         self._active_layer[self._active_layer < 0.] = 0.
         self._active_layer_thickness[:] = np.sum(self._active_layer, axis=2, keepdims=True)
         self._active_layer_composition[:] = 0.
         np.divide(self._active_layer, self._active_layer_thickness, out=self._active_layer_composition, where=self._active_layer_thickness > 0.)
 
         self._sediment_outflux[:] = self._K_sed * cell_area * self._active_layer_composition * (self._water_flux*self._flow_proportions)**self.m * self._slope**self.n
+        np.divide(self._sediment_outflux, self.critical_flux, out=self._ratio_critical_outflux, where=self.critical_flux != 0)
+        self._sediment_outflux[:] -= self.critical_flux * (1. - np.exp(-self._ratio_critical_outflux))
 
     def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the diffuser for one timestep, dt.
@@ -154,8 +171,10 @@ class WaterDrivenDiffuser(_BaseStreamPower):
 
         self._calculate_sediment_diffusivity()
         self._calculate_sediment_outflux(dt)
-        self._max_sediment_outflux[self._grid.core_nodes] = cell_area[core_nodes]*np.minimum(self.max_erosion_rate, self._stratigraphy.class_thickness/dt)
-        self._max_bedrock_outflux[self._grid.core_nodes] = cell_area[core_nodes]*self.max_erosion_rate_br
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._max_sediment_outflux[self._grid.core_nodes] = cell_area[self._grid.core_nodes]*np.minimum((1. - self.porosity)*self.max_erosion_rate,
+                                                                                                        self._stratigraphy.get_class_thickness(porosity)/dt)
+        self._max_bedrock_outflux[self._grid.core_nodes] = (1. - self.porosity)*cell_area[core_nodes]*self.max_erosion_rate_br
 
         self._sediment_influx[:] = self._sediment_input
         calculate_sediment_influx(self._node_order,

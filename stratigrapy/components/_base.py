@@ -43,7 +43,6 @@ class _BaseHandler(Component):
     def __init__(
         self,
         grid,
-        number_of_lithologies,
         fields_to_track=None,
     ):
         """
@@ -51,8 +50,6 @@ class _BaseHandler(Component):
         ----------
         grid : ModelGrid
             A grid.
-        number_of_lithologies : int
-            The number of lithologies making the sediments.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -67,7 +64,7 @@ class _BaseHandler(Component):
         self._time = 0.
 
         # Fields for sediment fluxes
-        self._sediment_thickness = np.zeros((grid.number_of_nodes, number_of_lithologies))
+        self._sediment_thickness = np.zeros((grid.number_of_nodes, self._stratigraphy.number_of_classes))
 
     def _update_stratigraphy(self, update_compatible=False, update=False, at_bottom=False):
         """
@@ -118,8 +115,8 @@ class _BaseDisplacer(_BaseHandler):
     def __init__(
         self,
         grid,
-        number_of_lithologies,
         number_of_neighbors=1,
+        porosity=0.,
         max_erosion_rate=0.01,
         active_layer_rate=None,
         fields_to_track=None,
@@ -129,11 +126,12 @@ class _BaseDisplacer(_BaseHandler):
         ----------
         grid : ModelGrid
             A grid.
-        number_of_lithologies : int
-            The number of lithologies making the sediments.
         number_of_neighbors : int, optional
             The number of neighbors around a cell to consider when computing
             sediment displacement.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies.
         max_erosion_rate : float (m/time)
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
@@ -146,9 +144,10 @@ class _BaseDisplacer(_BaseHandler):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid, number_of_lithologies, fields_to_track)
+        super().__init__(grid, fields_to_track)
 
         # Parameters
+        self.porosity = convert_to_array(porosity)
         self.max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
         self.active_layer_rate = max_erosion_rate if active_layer_rate is None else active_layer_rate
 
@@ -158,12 +157,13 @@ class _BaseDisplacer(_BaseHandler):
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
-        self._sediment_influx = np.zeros((n_nodes, number_of_lithologies))
-        self._sediment_outflux = np.zeros((n_nodes, number_of_neighbors, number_of_lithologies))
-        self._max_sediment_outflux = np.zeros((n_nodes, 1, number_of_lithologies))
-        # self._total_sediment_outflux = np.zeros((n_nodes, 1, number_of_lithologies))
-        self._sediment_thickness = np.zeros((n_nodes, number_of_lithologies))
-        self._active_layer_composition = np.zeros((n_nodes, 1, number_of_lithologies))
+        n_sediments = self._stratigraphy.number_of_classes
+        self._sediment_influx = np.zeros((n_nodes, n_sediments))
+        self._sediment_outflux = np.zeros((n_nodes, number_of_neighbors, n_sediments))
+        self._max_sediment_outflux = np.zeros((n_nodes, 1, n_sediments))
+        # self._total_sediment_outflux = np.zeros((n_nodes, 1, n_sediments))
+        self._sediment_thickness = np.zeros((n_nodes, n_sediments))
+        self._active_layer_composition = np.zeros((n_nodes, 1, n_sediments))
 
     def _apply_fluxes(self, dt, update_compatible=False, update=False):
         """
@@ -174,7 +174,7 @@ class _BaseDisplacer(_BaseHandler):
 
         self._time += dt
 
-        self._sediment_thickness[core_nodes] = (self._sediment_influx[core_nodes] - np.sum(self._sediment_outflux[core_nodes], axis=1))*dt/cell_area[core_nodes]
+        self._sediment_thickness[core_nodes] = (self._sediment_influx[core_nodes] - np.sum(self._sediment_outflux[core_nodes], axis=1))*dt/(1. - self.porosity)/cell_area[core_nodes]
         self._update_stratigraphy(update_compatible, update)
         self._topography[core_nodes] += np.sum(self._sediment_thickness[core_nodes], axis=1)
 
@@ -193,10 +193,11 @@ class _BaseDiffuser(_BaseDisplacer):
     def __init__(
         self,
         grid,
+        number_of_neighbors=1,
         diffusivity_cont=0.01,
         diffusivity_mar=0.001,
         wave_base=20.,
-        number_of_neighbors=1,
+        porosity=0.,
         max_erosion_rate=0.01,
         active_layer_rate=None,
         exponent_slope=1.,
@@ -207,6 +208,9 @@ class _BaseDiffuser(_BaseDisplacer):
         ----------
         grid : ModelGrid
             A grid.
+        number_of_neighbors : int, optional
+            The number of neighbors around a cell to consider when computing
+            sediment displacement.
         diffusivity_cont : float or array-like (m/time)
             The diffusivity of the sediments over the continental domain for one
             or multiple lithologies.
@@ -215,9 +219,9 @@ class _BaseDiffuser(_BaseDisplacer):
             multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
-        number_of_neighbors : int, optional
-            The number of neighbors around a cell to consider when computing
-            sediment displacement.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies.
         max_erosion_rate : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
@@ -232,14 +236,13 @@ class _BaseDiffuser(_BaseDisplacer):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        self.K_cont = convert_to_array(diffusivity_cont)
-        n_sediments = len(self.K_cont)
-
-        super().__init__(grid, n_sediments, number_of_neighbors, max_erosion_rate,
+        super().__init__(grid, number_of_neighbors, porosity, max_erosion_rate,
                          active_layer_rate, fields_to_track)
 
         # Parameters
         n_nodes = grid.number_of_nodes
+        n_sediments = self._stratigraphy.number_of_classes
+        self.K_cont = convert_to_array(diffusivity_cont)
         self.K_mar = convert_to_array(diffusivity_mar)
         self.wave_base = wave_base
         self._K_sed = np.zeros((n_nodes, 1, n_sediments))
@@ -339,6 +342,8 @@ class _BaseStreamPower(_BaseDiffuser):
         diffusivity_cont=1e-5,
         diffusivity_mar=1e-6,
         wave_base=20.,
+        critical_flux=0.,
+        porosity=0.,
         max_erosion_rate=1e-2,
         active_layer_rate=1e-2,
         bedrock_composition=1.,
@@ -360,6 +365,12 @@ class _BaseStreamPower(_BaseDiffuser):
             multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
+        critical_flux : float or array-like (m3/time)
+            Critical sediment flux to start displace sediments in the stream
+            power law.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies.
         max_erosion_rate : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
@@ -386,11 +397,12 @@ class _BaseStreamPower(_BaseDiffuser):
         self._flow_receivers = grid.at_node["flow__receiver_node"][..., np.newaxis]
         n_receivers = self._flow_receivers.shape[1]
 
-        super().__init__(grid, diffusivity_cont, diffusivity_mar, wave_base,
-                         n_receivers, max_erosion_rate, active_layer_rate,
+        super().__init__(grid, n_receivers, diffusivity_cont, diffusivity_mar,
+                         wave_base, porosity, max_erosion_rate, active_layer_rate,
                          exponent_slope, fields_to_track)
 
         # Parameters
+        self.critical_flux = convert_to_array(critical_flux)
         self.bedrock_composition = convert_to_array(bedrock_composition)
         self.m = exponent_discharge
 
@@ -411,13 +423,14 @@ class _BaseStreamPower(_BaseDiffuser):
         self.ref_water_flux = ref_water_flux
 
         # Fields for sediment fluxes
-        n_sediments = self._K_sed.shape[2]
+        n_sediments = self._stratigraphy.number_of_classes
         if "sediment__unit_flux_in" in grid.at_node:
             self._sediment_input = grid.at_node["sediment__unit_flux_in"]
             if self._sediment_input.ndim == 1:
                 self._sediment_input = self._sediment_input[:, np.newaxis]
         else:
             self._sediment_input = np.zeros((n_nodes, n_sediments))
+        self._ratio_critical_outflux = np.zeros((n_nodes, n_receivers, n_sediments))
         self._max_sediment_outflux = np.zeros((n_nodes, n_sediments))
 
     def _normalize_water_flux(self):

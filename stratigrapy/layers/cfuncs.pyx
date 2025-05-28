@@ -128,3 +128,41 @@ def get_superficial_layer(
                     for cla in range(n_classes):
                         superficial_layer[col, cla] -= ratio*layers[layer, col, cla]
                     break
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def get_active_layer(
+    const cython.floating [:, :, :] layers,
+    const cython.floating [:, :, :] porosity,
+    long bottom_index,
+    const id_t [:] surface_index,
+    const cython.floating [:] dz,
+    cython.floating [:, :] active_layer,
+):
+    cdef int n_stacks = layers.shape[1]
+    cdef int n_classes = layers.shape[2]
+    cdef int col
+    cdef int cla
+    cdef int layer
+    cdef double thickness
+    cdef double active_layer_thickness
+    cdef double layer_thickness
+    cdef double ratio
+
+    with nogil:
+        for col in range(n_stacks):
+            active_layer_thickness = dz[col]
+            thickness = 0.
+            for layer in range(surface_index[col], bottom_index - 1, -1):
+                for cla in range(n_classes):
+                    active_layer[col, cla] += (1. - porosity[layer, col, cla])*layers[layer, col, cla]
+                    thickness += layers[layer, col, cla]
+                if thickness > active_layer_thickness:
+                    layer_thickness = 0.
+                    for cla in range(n_classes):
+                        layer_thickness += layers[layer, col, cla]
+                    ratio = (thickness - active_layer_thickness)/layer_thickness
+                    for cla in range(n_classes):
+                        active_layer[col, cla] -= ratio*(1. - porosity[layer, col, cla])*layers[layer, col, cla]
+                    break

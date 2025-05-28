@@ -42,9 +42,9 @@ class SedimentCompactor(Component):
     Granjeon, D. (1996)
         Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
         https://theses.hal.science/tel-00648827
-    Granjeon, D., & Joseph, P. (1999)
-        Concepts and applications of a 3-D multiple lithology, diffusive model in stratigraphic modeling
-        https://doi.org/10.2110/pec.99.62.0197
+    Salles, T., Mallard, C., & Zahirovic, S. (2020)
+        goSPL: global scalable paleo landscape evolution
+        https://doi.org/10.21105/joss.02804
     """
 
     _name = "SedimentCompactor"
@@ -106,9 +106,6 @@ class SedimentCompactor(Component):
         # Physical fields
         self._topography = grid.at_node['topographic__elevation']
         self._stratigraphy = grid.stacked_layers
-        if self._stratigraphy.number_of_layers == 0:
-            _fields_to_track = {field: grid.at_node[field][grid.core_nodes] for field in self.fields_to_track}
-            self._stratigraphy.add(0., time=0., **_fields_to_track)
 
         # Fields for compaction
         self._initial_thickness = np.zeros(self._stratigraphy.number_of_stacks)
@@ -120,10 +117,10 @@ class SedimentCompactor(Component):
 
         self._initial_thickness[:] = self._stratigraphy.thickness
 
-        _depth = self._stratigraphy.z[..., np.newaxis]
+        _depth = self._stratigraphy.z[..., np.newaxis] # This is awfully slow
         _depth[1:] = _depth[1:] - (_depth[1:] - _depth[:-1])/2.
         _depth[0] /= 2.
-        porosity = self.initial_porosity*np.exp(-_depth/self.efolding_thickness)
+        porosity = self.initial_porosity*np.exp(-_depth/self.efolding_thickness) # This is awfully slow
         porosity = np.minimum(self._stratigraphy['sediment__porosity'], porosity)
 
         self._stratigraphy['_dz'][:] *= (1. - self._stratigraphy['sediment__porosity'])/(1. - porosity)

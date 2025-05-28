@@ -27,7 +27,7 @@ import numpy as np
 from landlab import RasterModelGrid
 
 from .._base import _BaseDisplacer
-from ...utils import convert_to_array, format_fields_to_track
+from ...utils import convert_to_array
 from .cfuncs import calculate_sediment_influx
 
 
@@ -96,7 +96,9 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         grid,
         repose_angle_cont=2.,
         repose_angle_mar=2.,
-        active_layer_rate=1e-2,
+        porosity=0.,
+        max_erosion_rate=0.01,
+        active_layer_rate=None,
         fields_to_track=None,
     ):
         """
@@ -110,11 +112,19 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         repose_angle_mar : float or array-like (degree)
             The static angle of repose in the continental domain for one or
             multiple lithologies above which sediments move downslope.
+        porosity : float or array-like (-)
+            The porosity of the sediments at the time of deposition for one or
+            multiple lithologies. When computing the active layer, this porosity
+            is used unless the field 'sediment__porosity' is being tracked in
+            the stratigraphy.
+        max_erosion_rate : float (m/time), optional
+            The maximum erosion rate of the sediments. If None, all the sediments
+            may be eroded in a single time step. The erosion rate defines the
+            thickness of the active layer if `active_layer_rate` is None.
         active_layer_rate : float or array-like (m/time), optional
             The rate of formation of the active layer, which is used to determine
-            the composition of the transported sediments. Erosion is not limited
-            to that layer. If None, the entire layer of sediments is used as
-            active layer.
+            the composition of the transported sediments. By default, it is set
+            by the maximum erosion rate.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -122,7 +132,7 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         self.repose_angle_cont = convert_to_array(repose_angle_cont)
         n_sediments = len(self.repose_angle_cont)
 
-        super().__init__(grid, n_sediments, 1, active_layer_rate, active_layer_rate,
+        super().__init__(grid, 1, porosity, max_erosion_rate, active_layer_rate,
                          fields_to_track)
 
         # Parameters
@@ -169,7 +179,8 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._active_layer_composition[self._grid.core_nodes] = self._stratigraphy.get_superficial_composition(self.active_layer_rate*dt)
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._active_layer_composition[self._grid.core_nodes] = self._stratigraphy.get_active_composition(self.active_layer_rate*dt, porosity)
 
         self._steepest_receivers[:] = np.argmax(self._slope, axis=1, keepdims=True)
         self._steepest_slope[:] = np.take_along_axis(self._slope, self._steepest_receivers, axis=1)
@@ -186,7 +197,9 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._max_sediment_outflux[self._grid.core_nodes, 0] = self._stratigraphy.class_thickness*cell_area[self._grid.core_nodes]/dt
+        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
+        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[self._grid.core_nodes]*np.minimum((1. - self.porosity)*self.max_erosion_rate,
+                                                                                                           self._stratigraphy.get_class_thickness(porosity)/dt)
         self._sediment_outflux[self._sediment_outflux > self._max_sediment_outflux] = self._max_sediment_outflux[self._sediment_outflux > self._max_sediment_outflux]
 
     def run_one_step(self, dt, update_compatible=False, update=False):

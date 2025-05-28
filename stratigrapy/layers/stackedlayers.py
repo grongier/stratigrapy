@@ -27,7 +27,7 @@ import os
 import numpy as np
 from landlab.layers.eventlayers import _reduce_matrix, _valid_keywords_or_raise, _allocate_layers_for
 
-from .cfuncs import deposit_or_erode, get_surface_index, get_superficial_layer
+from .cfuncs import deposit_or_erode, get_surface_index, get_superficial_layer, get_active_layer
 
 
 ################################################################################
@@ -72,6 +72,21 @@ def _get_superficial_layer(layers, bottom_index, top_index, dz, superficial_laye
     dz = _broadcast(dz, layers.shape[1:2])
 
     get_superficial_layer(layers, bottom_index, top_index, dz, superficial_layer)
+
+
+def _get_active_layer(layers, porosity, bottom_index, top_index, dz, active_layer):
+    """Get the thicknesses of all classes in an active layer defined by its
+    thickness from the surface `dz`.
+    """
+    layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
+    dz = _broadcast(dz, layers.shape[1:2])
+
+    if porosity is not None and porosity.shape == layers.shape:
+        get_active_layer(layers, porosity, bottom_index, top_index, dz, active_layer)
+    else:
+        get_superficial_layer(layers, bottom_index, top_index, dz, active_layer)
+        if porosity is not None:
+            active_layer *= (1. - porosity)
 
 
 class _BlockSlice:
@@ -132,24 +147,6 @@ class _BlockSlice:
         (start, stop, step)
             Tuple of (int* that gives the row of the first block, row of the
             last block, and the number of rows in each block.
-
-        Examples
-        --------
-        >>> from landlab.layers.eventlayers import _BlockSlice
-
-        The default is one single block that encomapses all the rows.
-
-        >>> _BlockSlice().indices(4)
-        (0, 4, 4)
-
-        >>> _BlockSlice(3).indices(4)
-        (0, 3, 3)
-
-        >>> _BlockSlice(1, 3).indices(4)
-        (1, 3, 2)
-
-        >>> _BlockSlice(1, 7, 2).indices(8)
-        (1, 7, 2)
         """
         start, stop, step = self.start, self.stop, self.step
         if stop is None:
@@ -414,6 +411,34 @@ class StackedLayers:
         of shape `(number_of_stacks, number_of_classes)`.
         """
         return np.sum(self.dz, axis=0)
+    
+    def get_class_thickness(self, porosity=None):
+        """Total sediment thickness of the columns for each class, removing
+        porosity if given.
+
+        Parameters
+        ----------
+        porosity : array_like or str
+            Porosity of all the layers for each class, which can be a layer
+            property given by its name, or the porosity for each class, which
+            is then identical for all layers.
+
+        Returns
+        -------
+        thickness
+            The sum of all layer thicknesses for each stack as an array of shape
+            `(number_of_stacks, number_of_classes)`.
+        """
+        if porosity is None:
+            return np.sum(self.dz, axis=0)
+        elif isinstance(porosity, str) and porosity in self._attrs:
+            return np.sum(self.dz*(1. - self[porosity]), axis=0)
+        else:
+            porosity = np.asarray(porosity)
+            if porosity.ndim == self.dz.ndim:
+                return np.sum(self.dz*(1. - porosity), axis=0)
+            else:
+                return np.sum(self.dz, axis=0)*(1. - porosity)
 
     @property
     def layer_thickness(self):
@@ -442,6 +467,16 @@ class StackedLayers:
         """
         return self._attrs["_dz"][self._first_layer:self._first_layer + self.number_of_layers]
 
+    def _get_composition(self, layer):
+        """Get the composition of all classes in one or several layers.
+        """
+        thickness = np.sum(layer, axis=-1, keepdims=True)
+
+        composition = np.zeros_like(layer)
+        np.divide(layer, thickness, out=composition, where=thickness > 0.)
+
+        return composition
+
     @property
     def composition(self):
         """Composition of each layer.
@@ -449,11 +484,7 @@ class StackedLayers:
         The composition of each layer at each stack as an array of shape
         `(number_of_layers, number_of_stacks, number of classes)`.
         """
-        layer_thickness = np.sum(self.dz, axis=2, keepdims=True)
-        layer_composition = np.zeros_like(self.dz)
-        np.divide(self.dz, layer_thickness, out=layer_composition, where=layer_thickness > 0.)
-
-        return layer_composition
+        return self._get_composition(self.dz)
 
     @property
     def most_frequent_class(self):
@@ -551,12 +582,34 @@ class StackedLayers:
                 raise ValueError(
                     f"{name!r} is not being tracked. Error in adding."
                 ) from exc
+            
+    def _reduce_attribute(self, array, start, stop, step, n_blocks, reducer):
+        """Combines layers of a specific attribute.
+        """
+        if self.fuse_continuously == True and reducer == np.mean and stop - start == 2:
+            factor = np.array([[self._number_of_sublayers], [1]])
+            factor = factor.reshape(factor.shape + (1,)*(array.ndim - factor.ndim))
+            middle = _reduce_matrix(factor*array[start:stop], step, np.sum)/(self._number_of_sublayers + 1.)
+        elif reducer == 'weighted_mean':
+            thickness = self._attrs['_dz'][start:stop]
+            total_thickness = np.sum(thickness, axis=0, keepdims=True)
+            factor = np.zeros_like(thickness)
+            np.divide(thickness, total_thickness, out=factor, where=total_thickness > 0.)
+            middle = _reduce_matrix(factor*array[start:stop], step, np.sum)
+        else:
+            middle = _reduce_matrix(array[start:stop], step, reducer)
+        top = array[stop : self._first_layer + self._number_of_layers]
+
+        array[start : start + n_blocks] = middle
+        array[start + n_blocks : start + n_blocks + len(top)] = top
 
     def reduce(self, *args, **kwds):
         """reduce([start], stop, [step])
         Combine layers.
 
-        Reduce adjacent layers into a single layer.
+        Reduce adjacent layers into a single layer. Layer reduction can be done
+        using a function (e.g., np.sum or np.mean) or with the string 'weighted_mean',
+        which uses a mean weighted by layer thickness.
         """
         _valid_keywords_or_raise(kwds, required=self.tracking, optional=self._attrs)
 
@@ -570,17 +623,11 @@ class StackedLayers:
         n_blocks = (stop - start) // step
         n_removed = n_blocks * (step - 1)
         for name, array in self._attrs.items():
-            reducer = kwds.get(name, np.sum)
-            # TODO: See if that can be removed
-            if self.fuse_continuously == True and reducer == np.mean and stop - start == 2:
-                factor = np.array([[self._number_of_sublayers], [1]])
-                middle = _reduce_matrix(factor*array[start:stop], step, np.sum)/(self._number_of_sublayers + 1.)
-            else:
-                middle = _reduce_matrix(array[start:stop], step, reducer)
-            top = array[stop : self._first_layer + self._number_of_layers]
-
-            array[start : start + n_blocks] = middle
-            array[start + n_blocks : start + n_blocks + len(top)] = top
+            if name != '_dz':
+                reducer = kwds.get(name, np.sum)
+                self._reduce_attribute(array, start, stop, step, n_blocks, reducer)
+        reducer = kwds.get('_dz', np.sum)
+        self._reduce_attribute(self._attrs['_dz'], start, stop, step, n_blocks, reducer)
 
         self._number_of_layers -= n_removed
         last_layer = self._first_layer + self.number_of_layers - 1
@@ -603,10 +650,6 @@ class StackedLayers:
 
         if finalize == False:
             stop_fuse -= self.number_of_top_layers
-            # TODO: The original idea was to handle layer addition and update in
-            # here rather than in individual components, but this is getting
-            # complicated and inefficient (why add a layer and fuse it with
-            # the previous one instead of just updating the previous one?)
             if self.fuse_continuously == False and stop_fuse - start_fuse >= self.number_of_layers_to_fuse:
                 self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
                 self._number_of_fused_layers += (stop_fuse - start_fuse)//self.number_of_layers_to_fuse
@@ -618,7 +661,7 @@ class StackedLayers:
                 self._number_of_sublayers += 1
                 if self._number_of_sublayers == self.number_of_layers_to_fuse:
                     self._number_of_sublayers = 0
-                    self._number_of_fused_layers += 1                    
+                    self._number_of_fused_layers += 1
         else:
             if stop_fuse - start_fuse > self.number_of_layers_to_fuse:
                 self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
@@ -642,13 +685,7 @@ class StackedLayers:
     def get_surface_composition(self):
         """Composition of the surface layer (i.e., proportion of each class).
         """
-        surface = self.get_surface_values('_dz')
-        thickness = np.sum(surface, axis=1, keepdims=True)
-
-        composition = np.zeros_like(surface)
-        np.divide(surface, thickness, out=composition, where=thickness > 0.)
-
-        return composition
+        return self._get_composition(self.get_surface_values('_dz'))
 
     def get_superficial_layer(self, dz):
         """Get the thicknesses of all classes in a superficial layer defined by
@@ -684,13 +721,56 @@ class StackedLayers:
         superficial_composition
             The composition of material from each class within the superficial layer.
         """
-        superficial_layer = self.get_superficial_layer(dz)
-        thickness = np.sum(superficial_layer, axis=1, keepdims=True)
+        return self._get_composition(self.get_superficial_layer(dz))
 
-        composition = np.zeros_like(superficial_layer)
-        np.divide(superficial_layer, thickness, out=composition, where=thickness > 0.)
+    def get_active_layer(self, dz, porosity=None):
+        """Get the thicknesses of all classes in an active layer defined by its
+        thickness from the surface `dz`.
 
-        return composition
+        Parameters
+        ----------
+        dz : float or array_like
+            Thickness from the surface of the active layer.
+        porosity : array_like or str
+            Porosity of all the layers for each class, which can be a layer
+            property given by its name, or the porosity for each class, which
+            is then identical for all layers.
+
+        Returns
+        -------
+        active_layer
+            The thickness of material from each class within the active layer.
+        """
+        if isinstance(porosity, str):
+            porosity = self._attrs[porosity]
+        elif porosity is not None:
+            porosity = np.asarray(porosity)
+
+        active_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
+        _get_active_layer(self._attrs["_dz"], porosity, self._first_layer,
+                          self._surface_index, dz, active_layer)
+
+        return active_layer
+
+    def get_active_composition(self, dz, porosity=None):
+        """Get the composition of all classes in an active layer defined by its
+        thickness from the surface `dz`.
+
+        Parameters
+        ----------
+        dz : float or array_like
+            Thickness from the surface of the active layer.
+        porosity : array_like or str
+            Porosity of all the layers for each class, which can be a layer
+            property given by its name, or the porosity for each class, which
+            is then identical for all layers.
+
+        Returns
+        -------
+        active_composition
+            The composition of material from each class within the active layer.
+        """
+        return self._get_composition(self.get_active_layer(dz, porosity))
 
     def _add_empty_layer(self, at_bottom=False):
         """Add a new empty layer to the stacks.
