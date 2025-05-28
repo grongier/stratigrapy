@@ -32,6 +32,7 @@ from ...utils import convert_to_array
 ################################################################################
 # Component
 
+
 class BedrockWeatherer(_BaseHandler):
     """Bedrock weathering in a StackedLayers.
 
@@ -60,13 +61,15 @@ class BedrockWeatherer(_BaseHandler):
         },
     }
 
-    def __init__(self,
-                 grid,
-                 max_weathering_rate=1e-5,
-                 weathering_decay_depth=1.,
-                 wave_base=20.,
-                 bedrock_composition=1.,
-                 fields_to_track=None):
+    def __init__(
+        self,
+        grid,
+        max_weathering_rate=1e-5,
+        weathering_decay_depth=1.0,
+        wave_base=20.0,
+        bedrock_composition=1.0,
+        fields_to_track=None,
+    ):
         """
         Parameters
         ----------
@@ -96,7 +99,7 @@ class BedrockWeatherer(_BaseHandler):
         self.wave_base = wave_base
 
         # Physical fields
-        self._bathymetry = grid.at_node['bathymetric__depth']
+        self._bathymetry = grid.at_node["bathymetric__depth"]
 
         # Fields for weathering
         self._weathering_depth = np.zeros((grid.number_of_nodes, 1))
@@ -105,11 +108,17 @@ class BedrockWeatherer(_BaseHandler):
         """
         Calculates the weathering depth over the continental and marine domains.
         """
-        self._weathering_depth[:, 0] = self.max_weathering_rate*dt
-        self._weathering_depth[self._bathymetry > 0., 0] *= np.exp(-self._bathymetry[self._bathymetry > 0.]/self.wave_base)
-        self._weathering_depth[self._grid.core_nodes, 0] *= np.exp(-self._stratigraphy.thickness/self.weathering_decay_depth)
+        self._weathering_depth[:, 0] = self.max_weathering_rate * dt
+        self._weathering_depth[self._bathymetry > 0.0, 0] *= np.exp(
+            -self._bathymetry[self._bathymetry > 0.0] / self.wave_base
+        )
+        self._weathering_depth[self._grid.core_nodes, 0] *= np.exp(
+            -self._stratigraphy.thickness / self.weathering_decay_depth
+        )
 
-    def run_one_step(self, dt, update_compatible=False, update=False, update_time=False):
+    def run_one_step(
+        self, dt, update_compatible=False, update=False, update_time=False
+    ):
         """Run the weatherer for one timestep, dt.
 
         Parameters
@@ -133,6 +142,8 @@ class BedrockWeatherer(_BaseHandler):
         self._time += dt
 
         self._calculate_weathering_depth(dt)
-        self._sediment_thickness[core_nodes] = self.bedrock_composition*self._weathering_depth[core_nodes]
+        self._sediment_thickness[core_nodes] = (
+            self.bedrock_composition * self._weathering_depth[core_nodes]
+        )
 
         self._update_stratigraphy(update_compatible, update, True)

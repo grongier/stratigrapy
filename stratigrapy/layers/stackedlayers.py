@@ -25,13 +25,23 @@
 
 import os
 import numpy as np
-from landlab.layers.eventlayers import _reduce_matrix, _valid_keywords_or_raise, _allocate_layers_for
+from landlab.layers.eventlayers import (
+    _reduce_matrix,
+    _valid_keywords_or_raise,
+    _allocate_layers_for,
+)
 
-from .cfuncs import deposit_or_erode, get_surface_index, get_superficial_layer, get_active_layer
+from .cfuncs import (
+    deposit_or_erode,
+    get_surface_index,
+    get_superficial_layer,
+    get_active_layer,
+)
 
 
 ################################################################################
 # Base functions
+
 
 def _broadcast(x, shape):
     """
@@ -48,8 +58,7 @@ def _broadcast(x, shape):
 
 
 def _deposit_or_erode(layers, bottom_index, top_index, dz):
-    """Update the array that contains layers with deposition or erosion.
-    """
+    """Update the array that contains layers with deposition or erosion."""
     layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
     dz = _broadcast(dz, layers.shape[1:3])
 
@@ -57,8 +66,7 @@ def _deposit_or_erode(layers, bottom_index, top_index, dz):
 
 
 def _get_surface_index(layers, bottom_index, top_index, surface_index):
-    """Get index within each stack of the layer at the topographic surface.
-    """
+    """Get index within each stack of the layer at the topographic surface."""
     layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
 
     get_surface_index(layers, bottom_index, top_index, surface_index)
@@ -86,7 +94,7 @@ def _get_active_layer(layers, porosity, bottom_index, top_index, dz, active_laye
     else:
         get_superficial_layer(layers, bottom_index, top_index, dz, active_layer)
         if porosity is not None:
-            active_layer *= (1. - porosity)
+            active_layer *= 1.0 - porosity
 
 
 class _BlockSlice:
@@ -196,12 +204,20 @@ def resize_array(array, left_new_cap, right_new_cap):
 ################################################################################
 # StackedLayersMixIn
 
+
 class StackedLayersMixIn:
     """MixIn that adds a StackedLayers attribute to a ModelGrid."""
 
-    def __init__(self, number_of_classes, initial_allocation, new_allocation,
-                 number_of_layers_to_fuse, number_of_top_layers, fuse_continuously,
-                 remove_empty_layers):
+    def __init__(
+        self,
+        number_of_classes,
+        initial_allocation,
+        new_allocation,
+        number_of_layers_to_fuse,
+        number_of_top_layers,
+        fuse_continuously,
+        remove_empty_layers,
+    ):
         """Instantiates the member variables of the StackedLayersMixIn.
 
         Parameters
@@ -245,14 +261,16 @@ class StackedLayersMixIn:
         try:
             self._stacked_layers
         except AttributeError:
-            self._stacked_layers = StackedLayers(self.number_of_cells,
-                                                 self.number_of_classes,
-                                                 self.initial_allocation,
-                                                 self.new_allocation,
-                                                 self.number_of_layers_to_fuse,
-                                                 self.number_of_top_layers,
-                                                 self.fuse_continuously,
-                                                 self.remove_empty_layers)
+            self._stacked_layers = StackedLayers(
+                self.number_of_cells,
+                self.number_of_classes,
+                self.initial_allocation,
+                self.new_allocation,
+                self.number_of_layers_to_fuse,
+                self.number_of_top_layers,
+                self.fuse_continuously,
+                self.remove_empty_layers,
+            )
         return self._stacked_layers
 
     @property
@@ -263,6 +281,7 @@ class StackedLayersMixIn:
 
 ################################################################################
 # StackedLayers
+
 
 class StackedLayers:
     """Track EventLayers where each event is its own layer and is made of
@@ -337,7 +356,9 @@ class StackedLayers:
         self.remove_empty_layers = remove_empty_layers
 
     def __getitem__(self, name):
-        return self._attrs[name][self._first_layer:self._first_layer + self.number_of_layers]
+        return self._attrs[name][
+            self._first_layer : self._first_layer + self.number_of_layers
+        ]
 
     def __setitem__(self, name, values):
         dims = (self.allocated, self.number_of_stacks)
@@ -348,7 +369,9 @@ class StackedLayers:
         #     values = np.expand_dims(values, 1)
         # values = np.broadcast_to(values, shape)
         self._attrs[name] = _allocate_layers_for(values, *dims)
-        self._attrs[name][self._first_layer:self._first_layer + self.number_of_layers] = values
+        self._attrs[name][
+            self._first_layer : self._first_layer + self.number_of_layers
+        ] = values
 
     def __iter__(self):
         return (name for name in self._attrs if not name.startswith("_"))
@@ -368,15 +391,17 @@ class StackedLayers:
         )
 
     def __repr__(self):
-        return self.__class__.__name__ + "({number_of_stacks}, {number_of_classes})".format(
-            number_of_stacks=self.number_of_stacks,
-            number_of_classes=self.number_of_classes,
+        return (
+            self.__class__.__name__
+            + "({number_of_stacks}, {number_of_classes})".format(
+                number_of_stacks=self.number_of_stacks,
+                number_of_classes=self.number_of_classes,
+            )
         )
 
     @property
     def tracking(self):
-        """Layer properties being tracked.
-        """
+        """Layer properties being tracked."""
         return [name for name in self._attrs if not name.startswith("_")]
 
     def _setup_layers(self, **kwds):
@@ -411,7 +436,7 @@ class StackedLayers:
         of shape `(number_of_stacks, number_of_classes)`.
         """
         return np.sum(self.dz, axis=0)
-    
+
     def get_class_thickness(self, porosity=None):
         """Total sediment thickness of the columns for each class, removing
         porosity if given.
@@ -432,13 +457,13 @@ class StackedLayers:
         if porosity is None:
             return np.sum(self.dz, axis=0)
         elif isinstance(porosity, str) and porosity in self._attrs:
-            return np.sum(self.dz*(1. - self[porosity]), axis=0)
+            return np.sum(self.dz * (1.0 - self[porosity]), axis=0)
         else:
             porosity = np.asarray(porosity)
             if porosity.ndim == self.dz.ndim:
-                return np.sum(self.dz*(1. - porosity), axis=0)
+                return np.sum(self.dz * (1.0 - porosity), axis=0)
             else:
-                return np.sum(self.dz, axis=0)*(1. - porosity)
+                return np.sum(self.dz, axis=0) * (1.0 - porosity)
 
     @property
     def layer_thickness(self):
@@ -465,15 +490,16 @@ class StackedLayers:
         The thickness of each layer at each stack as an array of shape
         `(number_of_layers, number_of_stacks, number of classes)`.
         """
-        return self._attrs["_dz"][self._first_layer:self._first_layer + self.number_of_layers]
+        return self._attrs["_dz"][
+            self._first_layer : self._first_layer + self.number_of_layers
+        ]
 
     def _get_composition(self, layer):
-        """Get the composition of all classes in one or several layers.
-        """
+        """Get the composition of all classes in one or several layers."""
         thickness = np.sum(layer, axis=-1, keepdims=True)
 
         composition = np.zeros_like(layer)
-        np.divide(layer, thickness, out=composition, where=thickness > 0.)
+        np.divide(layer, thickness, out=composition, where=thickness > 0.0)
 
         return composition
 
@@ -497,14 +523,12 @@ class StackedLayers:
 
     @property
     def number_of_layers(self):
-        """Total number of layers.
-        """
+        """Total number of layers."""
         return self._number_of_layers
 
     @property
     def allocated(self):
-        """Total number of allocated layers.
-        """
+        """Total number of allocated layers."""
         return self._attrs["_dz"].shape[0]
 
     def add(self, dz, at_bottom=False, update=False, update_compatible=False, **kwds):
@@ -535,7 +559,9 @@ class StackedLayers:
         else:
             is_compatible = False
 
-        if (update == False and is_compatible == False) or (update == True and self.number_of_layers == 0):
+        if (update == False and is_compatible == False) or (
+            update == True and self.number_of_layers == 0
+        ):
             self._add_empty_layer(at_bottom=at_bottom)
 
         layer = self._first_layer
@@ -543,7 +569,9 @@ class StackedLayers:
             layer += self.number_of_layers - 1
         _deposit_or_erode(self._attrs["_dz"], self._first_layer, layer, dz)
         last_layer = self._first_layer + self.number_of_layers - 1
-        _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
+        _get_surface_index(
+            self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+        )
 
         if is_compatible == False:
             for name in kwds:
@@ -570,9 +598,13 @@ class StackedLayers:
         if self.number_of_layers == 0:
             self._setup_layers(**kwds)
 
-        _deposit_or_erode(self._attrs["_dz"], self._first_layer, self._first_layer + layer, dz)
+        _deposit_or_erode(
+            self._attrs["_dz"], self._first_layer, self._first_layer + layer, dz
+        )
         last_layer = self._first_layer + self.number_of_layers - 1
-        _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
+        _get_surface_index(
+            self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+        )
 
         for name in kwds:
             try:
@@ -582,20 +614,23 @@ class StackedLayers:
                 raise ValueError(
                     f"{name!r} is not being tracked. Error in adding."
                 ) from exc
-            
+
     def _reduce_attribute(self, array, start, stop, step, n_blocks, reducer):
-        """Combines layers of a specific attribute.
-        """
+        """Combines layers of a specific attribute."""
         if self.fuse_continuously == True and reducer == np.mean and stop - start == 2:
             factor = np.array([[self._number_of_sublayers], [1]])
-            factor = factor.reshape(factor.shape + (1,)*(array.ndim - factor.ndim))
-            middle = _reduce_matrix(factor*array[start:stop], step, np.sum)/(self._number_of_sublayers + 1.)
-        elif reducer == 'weighted_mean':
-            thickness = self._attrs['_dz'][start:stop]
+            factor = factor.reshape(factor.shape + (1,) * (array.ndim - factor.ndim))
+            middle = _reduce_matrix(factor * array[start:stop], step, np.sum) / (
+                self._number_of_sublayers + 1.0
+            )
+        elif reducer == "weighted_mean":
+            thickness = self._attrs["_dz"][start:stop]
             total_thickness = np.sum(thickness, axis=0, keepdims=True)
             factor = np.zeros_like(thickness)
-            np.divide(thickness, total_thickness, out=factor, where=total_thickness > 0.)
-            middle = _reduce_matrix(factor*array[start:stop], step, np.sum)
+            np.divide(
+                thickness, total_thickness, out=factor, where=total_thickness > 0.0
+            )
+            middle = _reduce_matrix(factor * array[start:stop], step, np.sum)
         else:
             middle = _reduce_matrix(array[start:stop], step, reducer)
         top = array[stop : self._first_layer + self._number_of_layers]
@@ -623,15 +658,17 @@ class StackedLayers:
         n_blocks = (stop - start) // step
         n_removed = n_blocks * (step - 1)
         for name, array in self._attrs.items():
-            if name != '_dz':
+            if name != "_dz":
                 reducer = kwds.get(name, np.sum)
                 self._reduce_attribute(array, start, stop, step, n_blocks, reducer)
-        reducer = kwds.get('_dz', np.sum)
-        self._reduce_attribute(self._attrs['_dz'], start, stop, step, n_blocks, reducer)
+        reducer = kwds.get("_dz", np.sum)
+        self._reduce_attribute(self._attrs["_dz"], start, stop, step, n_blocks, reducer)
 
         self._number_of_layers -= n_removed
         last_layer = self._first_layer + self.number_of_layers - 1
-        _get_surface_index(self._attrs["_dz"], self._first_layer, last_layer, self._surface_index)
+        _get_surface_index(
+            self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+        )
 
     def fuse(self, finalize=False, **kwds):
         """Fuse layers to save computational resources during runtime. Layers
@@ -650,9 +687,16 @@ class StackedLayers:
 
         if finalize == False:
             stop_fuse -= self.number_of_top_layers
-            if self.fuse_continuously == False and stop_fuse - start_fuse >= self.number_of_layers_to_fuse:
-                self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
-                self._number_of_fused_layers += (stop_fuse - start_fuse)//self.number_of_layers_to_fuse
+            if (
+                self.fuse_continuously == False
+                and stop_fuse - start_fuse >= self.number_of_layers_to_fuse
+            ):
+                self.reduce(
+                    start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds
+                )
+                self._number_of_fused_layers += (
+                    stop_fuse - start_fuse
+                ) // self.number_of_layers_to_fuse
             elif self.fuse_continuously == True and stop_fuse > start_fuse:
                 self.reduce(start_fuse, stop_fuse, **kwds)
                 # TODO: Doing it here means that fuse needs to be called
@@ -664,8 +708,12 @@ class StackedLayers:
                     self._number_of_fused_layers += 1
         else:
             if stop_fuse - start_fuse > self.number_of_layers_to_fuse:
-                self.reduce(start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds)
-                self._number_of_fused_layers += (stop_fuse - start_fuse)//self.number_of_layers_to_fuse
+                self.reduce(
+                    start_fuse, stop_fuse, self.number_of_layers_to_fuse, **kwds
+                )
+                self._number_of_fused_layers += (
+                    stop_fuse - start_fuse
+                ) // self.number_of_layers_to_fuse
                 start_fuse = self._number_of_fused_layers
                 stop_fuse = self._number_of_layers
             self.reduce(start_fuse, stop_fuse, **kwds)
@@ -673,19 +721,16 @@ class StackedLayers:
 
     @property
     def surface_index(self):
-        """Index to the top non-empty layer.
-        """
+        """Index to the top non-empty layer."""
         return self._surface_index
 
     def get_surface_values(self, name):
-        """Values of a field on the surface layer.
-        """
+        """Values of a field on the surface layer."""
         return self._attrs[name][self.surface_index, np.arange(self._number_of_stacks)]
 
     def get_surface_composition(self):
-        """Composition of the surface layer (i.e., proportion of each class).
-        """
-        return self._get_composition(self.get_surface_values('_dz'))
+        """Composition of the surface layer (i.e., proportion of each class)."""
+        return self._get_composition(self.get_surface_values("_dz"))
 
     def get_superficial_layer(self, dz):
         """Get the thicknesses of all classes in a superficial layer defined by
@@ -702,8 +747,13 @@ class StackedLayers:
             The thickness of material from each class within the superficial layer.
         """
         superficial_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
-        _get_superficial_layer(self._attrs["_dz"], self._first_layer,
-                               self._surface_index, dz, superficial_layer)
+        _get_superficial_layer(
+            self._attrs["_dz"],
+            self._first_layer,
+            self._surface_index,
+            dz,
+            superficial_layer,
+        )
 
         return superficial_layer
 
@@ -747,8 +797,14 @@ class StackedLayers:
             porosity = np.asarray(porosity)
 
         active_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
-        _get_active_layer(self._attrs["_dz"], porosity, self._first_layer,
-                          self._surface_index, dz, active_layer)
+        _get_active_layer(
+            self._attrs["_dz"],
+            porosity,
+            self._first_layer,
+            self._surface_index,
+            dz,
+            active_layer,
+        )
 
         return active_layer
 
@@ -773,8 +829,7 @@ class StackedLayers:
         return self._get_composition(self.get_active_layer(dz, porosity))
 
     def _add_empty_layer(self, at_bottom=False):
-        """Add a new empty layer to the stacks.
-        """
+        """Add a new empty layer to the stacks."""
         if at_bottom == False and self._right_allocated == 0:
             self._resize(0, self.new_allocation[1])
             self._right_allocated = self.new_allocation[1]
@@ -796,8 +851,7 @@ class StackedLayers:
             self._attrs[name][layer] = 0.0
 
     def _remove_empty_layers(self):
-        """Remove empty layers at the top of the stack
-        """
+        """Remove empty layers at the top of the stack"""
         number_of_filled_layers = self.surface_index.max() + 1 - self._first_layer
         if number_of_filled_layers < self.number_of_layers:
             self._number_of_layers = number_of_filled_layers
@@ -836,7 +890,8 @@ class StackedLayers:
         return True
 
     def _resize(self, left_new_cap, right_new_cap):
-        """Allocate more memory for the layers.
-        """
+        """Allocate more memory for the layers."""
         for name in self._attrs:
-            self._attrs[name] = resize_array(self._attrs[name], left_new_cap, right_new_cap)
+            self._attrs[name] = resize_array(
+                self._attrs[name], left_new_cap, right_new_cap
+            )

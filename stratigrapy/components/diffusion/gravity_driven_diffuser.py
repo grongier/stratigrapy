@@ -31,6 +31,7 @@ from .._base import _BaseDiffuser
 ################################################################################
 # Component
 
+
 class GravityDrivenDiffuser(_BaseDiffuser):
     """Gravity-driven diffusion of a Landlab field in continental and marine domains.
 
@@ -51,11 +52,11 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         grid,
         diffusivity_cont=0.01,
         diffusivity_mar=0.001,
-        wave_base=20.,
-        porosity=0.,
+        wave_base=20.0,
+        porosity=0.0,
         max_erosion_rate=0.01,
         active_layer_rate=None,
-        exponent_slope=1.,
+        exponent_slope=1.0,
         fields_to_track=None,
     ):
         """
@@ -93,9 +94,18 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         self._neighbors = grid.active_adjacent_nodes_at_node
         n_neighbors = self._neighbors.shape[1]
 
-        super().__init__(grid, n_neighbors, diffusivity_cont, diffusivity_mar,
-                         wave_base, porosity, max_erosion_rate, active_layer_rate,
-                         exponent_slope, fields_to_track)
+        super().__init__(
+            grid,
+            n_neighbors,
+            diffusivity_cont,
+            diffusivity_mar,
+            wave_base,
+            porosity,
+            max_erosion_rate,
+            active_layer_rate,
+            exponent_slope,
+            fields_to_track,
+        )
 
         # Field for the steepest slope
         n_nodes = grid.number_of_nodes
@@ -112,9 +122,11 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         Calculates the slope between each node and its neighbors.
         """
-        self._slope[..., 0] = (self._topography[:, np.newaxis] - self._topography[self._neighbors])/self._link_lengths[self._links_to_neighbors]
-        self._slope[self._neighbors == -1] = 0.
-        self._slope[self._slope < 0.] = 0.
+        self._slope[..., 0] = (
+            self._topography[:, np.newaxis] - self._topography[self._neighbors]
+        ) / self._link_lengths[self._links_to_neighbors]
+        self._slope[self._neighbors == -1] = 0.0
+        self._slope[self._slope < 0.0] = 0.0
 
     def _calculate_sediment_outflux(self, dt):
         """
@@ -122,10 +134,23 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
-        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
-        self._active_layer_composition[self._grid.core_nodes, 0] = self._stratigraphy.get_active_composition(self.active_layer_rate*dt, porosity)
+        porosity = (
+            "sediment__porosity"
+            if "sediment__porosity" in self._stratigraphy._attrs
+            else self.porosity
+        )
+        self._active_layer_composition[self._grid.core_nodes, 0] = (
+            self._stratigraphy.get_active_composition(
+                self.active_layer_rate * dt, porosity
+            )
+        )
 
-        self._sediment_outflux[:] = self._K_sed * cell_area * self._active_layer_composition * self._slope**self.n
+        self._sediment_outflux[:] = (
+            self._K_sed
+            * cell_area
+            * self._active_layer_composition
+            * self._slope**self.n
+        )
 
     def _threshold_sediment_outflux(self, dt):
         """
@@ -134,20 +159,37 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        porosity = 'sediment__porosity' if 'sediment__porosity' in self._stratigraphy._attrs else self.porosity
-        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[self._grid.core_nodes]*np.minimum((1. - self.porosity)*self.max_erosion_rate,
-                                                                                                           self._stratigraphy.get_class_thickness(porosity)/dt)
-        self._total_sediment_outflux[:] = np.sum(self._sediment_outflux, axis=1, keepdims=True)
-        self._ratio[:] = 0.
-        np.divide(self._max_sediment_outflux, self._total_sediment_outflux, out=self._ratio, where=self._total_sediment_outflux > 0.)
-        self._sediment_outflux[self._ratio[:, 0, 0] < 1.] *= self._ratio[self._ratio[:, 0, 0] < 1.]
+        porosity = (
+            "sediment__porosity"
+            if "sediment__porosity" in self._stratigraphy._attrs
+            else self.porosity
+        )
+        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[
+            self._grid.core_nodes
+        ] * np.minimum(
+            (1.0 - self.porosity) * self.max_erosion_rate,
+            self._stratigraphy.get_class_thickness(porosity) / dt,
+        )
+        self._total_sediment_outflux[:] = np.sum(
+            self._sediment_outflux, axis=1, keepdims=True
+        )
+        self._ratio[:] = 0.0
+        np.divide(
+            self._max_sediment_outflux,
+            self._total_sediment_outflux,
+            out=self._ratio,
+            where=self._total_sediment_outflux > 0.0,
+        )
+        self._sediment_outflux[self._ratio[:, 0, 0] < 1.0] *= self._ratio[
+            self._ratio[:, 0, 0] < 1.0
+        ]
 
     def _calculate_sediment_influx(self):
         """
         Calculate the influx of sediments based on the outflux and the steepest
         slope.
         """
-        self._sediment_influx[:] = 0.
+        self._sediment_influx[:] = 0.0
         np.add.at(self._sediment_influx, self._neighbors, self._sediment_outflux)
 
     def run_one_step(self, dt, update_compatible=False, update=False):

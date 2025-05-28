@@ -35,9 +35,12 @@ from ..plot.layers import RasterModelGridLayerPlotterMixIn
 ################################################################################
 # Raster
 
-class RasterModelGrid(StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _RasterModelGrid):
-    """A 2D uniform rectilinear grid.
-    """
+
+class RasterModelGrid(
+    StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _RasterModelGrid
+):
+    """A 2D uniform rectilinear grid."""
+
     def __init__(
         self,
         shape,
@@ -109,16 +112,31 @@ class RasterModelGrid(StackedLayersMixIn, RasterModelGridLayerPlotterMixIn, _Ras
         RasterModelGrid
             A newly-created grid.
         """
-        _RasterModelGrid.__init__(self, shape, xy_spacing, xy_of_lower_left,
-                                  xy_of_reference, xy_axis_name, xy_axis_units, bc)
-        StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation, number_of_layers_to_fuse,
-                                    number_of_top_layers, fuse_continuously,
-                                    remove_empty_layers)
+        _RasterModelGrid.__init__(
+            self,
+            shape,
+            xy_spacing,
+            xy_of_lower_left,
+            xy_of_reference,
+            xy_axis_name,
+            xy_axis_units,
+            bc,
+        )
+        StackedLayersMixIn.__init__(
+            self,
+            number_of_classes,
+            initial_allocation,
+            new_allocation,
+            number_of_layers_to_fuse,
+            number_of_top_layers,
+            fuse_continuously,
+            remove_empty_layers,
+        )
 
 
 ################################################################################
 # Voronoi
+
 
 class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
     """This inherited class implements an unstructured grid in which cells are
@@ -128,6 +146,7 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
     Create an unstructured grid from points whose coordinates are given
     by the arrays *x*, *y*.
     """
+
     def __init__(
         self,
         x=None,
@@ -189,12 +208,19 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
         VoronoiDelaunayGrid
             A newly-created grid.
         """
-        _VoronoiDelaunayGrid.__init__(self, x, y, reorient_links, xy_of_reference,
-                                      xy_axis_name, xy_axis_units)
-        StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation, number_of_layers_to_fuse,
-                                    number_of_top_layers, fuse_continuously,
-                                    remove_empty_layers)
+        _VoronoiDelaunayGrid.__init__(
+            self, x, y, reorient_links, xy_of_reference, xy_axis_name, xy_axis_units
+        )
+        StackedLayersMixIn.__init__(
+            self,
+            number_of_classes,
+            initial_allocation,
+            new_allocation,
+            number_of_layers_to_fuse,
+            number_of_top_layers,
+            fuse_continuously,
+            remove_empty_layers,
+        )
 
 
 class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
@@ -207,6 +233,7 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
     then moved a random distance from their initial positions, bounded by a user-supplied
     threshold.
     """
+
     def __init__(
         self,
         shape,
@@ -291,17 +318,32 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
         FramedVoronoiGrid
             A newly-created grid.
         """
-        _FramedVoronoiGrid.__init__(self, shape, xy_spacing, xy_of_lower_left,
-                                    xy_min_spacing, seed, xy_of_reference,
-                                    xy_axis_name, xy_axis_units)
-        StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation, number_of_layers_to_fuse,
-                                    number_of_top_layers, fuse_continuously,
-                                    remove_empty_layers)
+        _FramedVoronoiGrid.__init__(
+            self,
+            shape,
+            xy_spacing,
+            xy_of_lower_left,
+            xy_min_spacing,
+            seed,
+            xy_of_reference,
+            xy_axis_name,
+            xy_axis_units,
+        )
+        StackedLayersMixIn.__init__(
+            self,
+            number_of_classes,
+            initial_allocation,
+            new_allocation,
+            number_of_layers_to_fuse,
+            number_of_top_layers,
+            fuse_continuously,
+            remove_empty_layers,
+        )
 
 
 ################################################################################
 # Hex
+
 
 class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
     """A grid of Voronoi Delaunay cells with a structured perimeter layout.
@@ -313,6 +355,7 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
     then moved a random distance from their initial positions, bounded by a user-supplied
     threshold.
     """
+
     def __init__(
         self,
         shape,
@@ -388,10 +431,25 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
         HexModelGrid
             A newly-created grid.
         """
-        _HexModelGrid.__init__(self, shape, spacing, xy_of_lower_left, orientation,
-                               node_layout, reorient_links, xy_of_reference,
-                               xy_axis_name, xy_axis_units)
-        StackedLayersMixIn.__init__(self, number_of_classes, initial_allocation,
-                                    new_allocation, number_of_layers_to_fuse,
-                                    number_of_top_layers, fuse_continuously,
-                                    remove_empty_layers)
+        _HexModelGrid.__init__(
+            self,
+            shape,
+            spacing,
+            xy_of_lower_left,
+            orientation,
+            node_layout,
+            reorient_links,
+            xy_of_reference,
+            xy_axis_name,
+            xy_axis_units,
+        )
+        StackedLayersMixIn.__init__(
+            self,
+            number_of_classes,
+            initial_allocation,
+            new_allocation,
+            number_of_layers_to_fuse,
+            number_of_top_layers,
+            fuse_continuously,
+            remove_empty_layers,
+        )

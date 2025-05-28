@@ -32,9 +32,9 @@ from ..utils import convert_to_array, format_fields_to_track
 ################################################################################
 # Base handler
 
+
 class _BaseHandler(Component):
-    """Base class to handle sediments in stacked layers.
-    """
+    """Base class to handle sediments in stacked layers."""
 
     _name = "_BaseHandler"
 
@@ -61,33 +61,45 @@ class _BaseHandler(Component):
 
         # Physical fields
         self._stratigraphy = grid.stacked_layers
-        self._time = 0.
+        self._time = 0.0
 
         # Fields for sediment fluxes
-        self._sediment_thickness = np.zeros((grid.number_of_nodes, self._stratigraphy.number_of_classes))
+        self._sediment_thickness = np.zeros(
+            (grid.number_of_nodes, self._stratigraphy.number_of_classes)
+        )
 
-    def _update_stratigraphy(self, update_compatible=False, update=False, at_bottom=False):
+    def _update_stratigraphy(
+        self, update_compatible=False, update=False, at_bottom=False
+    ):
         """
         Updates the stratigraphy based on the sediment changes.
         """
         core_nodes = self._grid.core_nodes
 
-        fields_to_track = {field: self._grid.at_node[field][core_nodes] for field in self.fields_to_track}
+        fields_to_track = {
+            field: self._grid.at_node[field][core_nodes]
+            for field in self.fields_to_track
+        }
         # _sediment_thickness also includes bedrock erosion, which only affects
         # the topography (sediment thickness in _stratigraphy won't become negative
         # if more material is to be removed than what is available, and the
         # bedrock below that is considered infinite)
-        self._stratigraphy.add(self._sediment_thickness[core_nodes], at_bottom=at_bottom,
-                               update=update, update_compatible=update_compatible,
-                               time=self._time, **fields_to_track)
+        self._stratigraphy.add(
+            self._sediment_thickness[core_nodes],
+            at_bottom=at_bottom,
+            update=update,
+            update_compatible=update_compatible,
+            time=self._time,
+            **fields_to_track,
+        )
 
 
 ################################################################################
 # Base displacer
 
+
 class _BaseDisplacer(_BaseHandler):
-    """Base class to displace sediments in continental and marine domains.
-    """
+    """Base class to displace sediments in continental and marine domains."""
 
     _name = "_BaseDisplacer"
 
@@ -116,7 +128,7 @@ class _BaseDisplacer(_BaseHandler):
         self,
         grid,
         number_of_neighbors=1,
-        porosity=0.,
+        porosity=0.0,
         max_erosion_rate=0.01,
         active_layer_rate=None,
         fields_to_track=None,
@@ -149,11 +161,13 @@ class _BaseDisplacer(_BaseHandler):
         # Parameters
         self.porosity = convert_to_array(porosity)
         self.max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
-        self.active_layer_rate = max_erosion_rate if active_layer_rate is None else active_layer_rate
+        self.active_layer_rate = (
+            max_erosion_rate if active_layer_rate is None else active_layer_rate
+        )
 
         # Physical fields
-        self._topography = grid.at_node['topographic__elevation']
-        self._bathymetry = grid.at_node['bathymetric__depth'][:, np.newaxis]
+        self._topography = grid.at_node["topographic__elevation"]
+        self._bathymetry = grid.at_node["bathymetric__depth"][:, np.newaxis]
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
@@ -174,17 +188,27 @@ class _BaseDisplacer(_BaseHandler):
 
         self._time += dt
 
-        self._sediment_thickness[core_nodes] = (self._sediment_influx[core_nodes] - np.sum(self._sediment_outflux[core_nodes], axis=1))*dt/(1. - self.porosity)/cell_area[core_nodes]
+        self._sediment_thickness[core_nodes] = (
+            (
+                self._sediment_influx[core_nodes]
+                - np.sum(self._sediment_outflux[core_nodes], axis=1)
+            )
+            * dt
+            / (1.0 - self.porosity)
+            / cell_area[core_nodes]
+        )
         self._update_stratigraphy(update_compatible, update)
-        self._topography[core_nodes] += np.sum(self._sediment_thickness[core_nodes], axis=1)
+        self._topography[core_nodes] += np.sum(
+            self._sediment_thickness[core_nodes], axis=1
+        )
 
 
 ################################################################################
 # Base diffuser
 
+
 class _BaseDiffuser(_BaseDisplacer):
-    """Base class to diffuse sediments in continental and marine domains.
-    """
+    """Base class to diffuse sediments in continental and marine domains."""
 
     _name = "_BaseDiffuser"
 
@@ -196,11 +220,11 @@ class _BaseDiffuser(_BaseDisplacer):
         number_of_neighbors=1,
         diffusivity_cont=0.01,
         diffusivity_mar=0.001,
-        wave_base=20.,
-        porosity=0.,
+        wave_base=20.0,
+        porosity=0.0,
         max_erosion_rate=0.01,
         active_layer_rate=None,
-        exponent_slope=1.,
+        exponent_slope=1.0,
         fields_to_track=None,
     ):
         """
@@ -236,8 +260,14 @@ class _BaseDiffuser(_BaseDisplacer):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid, number_of_neighbors, porosity, max_erosion_rate,
-                         active_layer_rate, fields_to_track)
+        super().__init__(
+            grid,
+            number_of_neighbors,
+            porosity,
+            max_erosion_rate,
+            active_layer_rate,
+            fields_to_track,
+        )
 
         # Parameters
         n_nodes = grid.number_of_nodes
@@ -253,12 +283,15 @@ class _BaseDiffuser(_BaseDisplacer):
         Calculates the diffusivity coefficient of the sediments over the continental
         and marine domains.
         """
-        self._K_sed[self._bathymetry[:, 0] == 0.] = self.K_cont
-        self._K_sed[self._bathymetry[:, 0] > 0., 0] = self.K_mar*np.exp(-self._bathymetry[self._bathymetry[:, 0] > 0.]/self.wave_base)
+        self._K_sed[self._bathymetry[:, 0] == 0.0] = self.K_cont
+        self._K_sed[self._bathymetry[:, 0] > 0.0, 0] = self.K_mar * np.exp(
+            -self._bathymetry[self._bathymetry[:, 0] > 0.0] / self.wave_base
+        )
 
 
 ################################################################################
 # Base stream power law model
+
 
 class _BaseStreamPower(_BaseDiffuser):
     """Base class to displace sediments in continental and marine domains using
@@ -341,14 +374,14 @@ class _BaseStreamPower(_BaseDiffuser):
         grid,
         diffusivity_cont=1e-5,
         diffusivity_mar=1e-6,
-        wave_base=20.,
-        critical_flux=0.,
-        porosity=0.,
+        wave_base=20.0,
+        critical_flux=0.0,
+        porosity=0.0,
         max_erosion_rate=1e-2,
         active_layer_rate=1e-2,
-        bedrock_composition=1.,
-        exponent_discharge=1.,
-        exponent_slope=1.,
+        bedrock_composition=1.0,
+        exponent_discharge=1.0,
+        exponent_slope=1.0,
         ref_water_flux=None,
         fields_to_track=None,
     ):
@@ -397,9 +430,18 @@ class _BaseStreamPower(_BaseDiffuser):
         self._flow_receivers = grid.at_node["flow__receiver_node"][..., np.newaxis]
         n_receivers = self._flow_receivers.shape[1]
 
-        super().__init__(grid, n_receivers, diffusivity_cont, diffusivity_mar,
-                         wave_base, porosity, max_erosion_rate, active_layer_rate,
-                         exponent_slope, fields_to_track)
+        super().__init__(
+            grid,
+            n_receivers,
+            diffusivity_cont,
+            diffusivity_mar,
+            wave_base,
+            porosity,
+            max_erosion_rate,
+            active_layer_rate,
+            exponent_slope,
+            fields_to_track,
+        )
 
         # Parameters
         self.critical_flux = convert_to_array(critical_flux)
@@ -408,7 +450,9 @@ class _BaseStreamPower(_BaseDiffuser):
 
         # Fields for stream power
         self._node_order = grid.at_node["flow__upstream_node_order"]
-        self._link_to_receiver = grid.at_node["flow__link_to_receiver_node"][..., np.newaxis]
+        self._link_to_receiver = grid.at_node["flow__link_to_receiver_node"][
+            ..., np.newaxis
+        ]
         self._slope = grid.at_node["topographic__steepest_slope"][..., np.newaxis]
         if self._flow_receivers.ndim == 2:
             self._flow_receivers = self._flow_receivers[..., np.newaxis]
@@ -416,10 +460,14 @@ class _BaseStreamPower(_BaseDiffuser):
             self._slope = self._slope[..., np.newaxis]
         n_nodes = grid.number_of_nodes
         if "flow__receiver_proportions" in grid.at_node:
-            self._flow_proportions = grid.at_node["flow__receiver_proportions"][..., np.newaxis]
+            self._flow_proportions = grid.at_node["flow__receiver_proportions"][
+                ..., np.newaxis
+            ]
         else:
             self._flow_proportions = np.ones((n_nodes, n_receivers, 1))
-        self._water_flux = grid.at_node["surface_water__discharge"][:, np.newaxis, np.newaxis]
+        self._water_flux = grid.at_node["surface_water__discharge"][
+            :, np.newaxis, np.newaxis
+        ]
         self.ref_water_flux = ref_water_flux
 
         # Fields for sediment fluxes
@@ -437,7 +485,7 @@ class _BaseStreamPower(_BaseDiffuser):
         """
         Normalizes the water flux if needed.
         """
-        if self.ref_water_flux == 'max':
+        if self.ref_water_flux == "max":
             self._water_flux[:] /= np.max(self._water_flux)
         elif isinstance(self.ref_water_flux, (int, float)):
             self._water_flux[:] /= self.ref_water_flux

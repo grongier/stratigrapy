@@ -33,6 +33,7 @@ from .cfuncs import mask_layer
 ################################################################################
 # Base functions
 
+
 def _get_variable_values(grid, var):
     """
     Gets the values for a variable of a StackedLayers.
@@ -44,11 +45,11 @@ def _get_variable_values(grid, var):
             return var[:, grid.core_nodes]
         else:
             return var
-    elif var == 'dz' or var == 'thickness':
-        return grid.stacked_layers['_dz']
-    elif var == 'composition':
+    elif var == "dz" or var == "thickness":
+        return grid.stacked_layers["_dz"]
+    elif var == "composition":
         return grid.stacked_layers.composition
-    elif var == 'most_frequent_class' or var == 'most_frequent':
+    elif var == "most_frequent_class" or var == "most_frequent":
         return grid.stacked_layers.most_frequent_class
     else:
         return grid.stacked_layers[var]
@@ -65,11 +66,16 @@ def _select_sublayers(layers, i, axis=2, indices=None):
         return layers[slices]
     elif callable(i):
         return i(layers, axis=axis)
-    elif i == 'middle':
-        slices = tuple(slice(None) if j != axis else layers.shape[axis]//2 for j in range(layers.ndim))
+    elif i == "middle":
+        slices = tuple(
+            slice(None) if j != axis else layers.shape[axis] // 2
+            for j in range(layers.ndim)
+        )
         return layers[slices]
-    elif i == 'top' and indices is not None:
-        return np.take_along_axis(layers, reshape_to_match(indices, layers.shape), axis=axis)[0]
+    elif i == "top" and indices is not None:
+        return np.take_along_axis(
+            layers, reshape_to_match(indices, layers.shape), axis=axis
+        )[0]
     else:
         return None
 
@@ -78,75 +84,101 @@ def _get_layer_values(grid, var, i_layer, i_class):
     """
     Gets the values of a layer.
     """
-    return _select_sublayers(_select_sublayers(_get_variable_values(grid, var),
-                                               i_layer,
-                                               axis=0,
-                                               indices=grid.stacked_layers.surface_index),
-                             i_class,
-                             axis=1)
+    return _select_sublayers(
+        _select_sublayers(
+            _get_variable_values(grid, var),
+            i_layer,
+            axis=0,
+            indices=grid.stacked_layers.surface_index,
+        ),
+        i_class,
+        axis=1,
+    )
 
 
 def _get_layer_elevation(grid):
     """
     Gets the elevation of a StackedLayers.
     """
-    z = grid.at_node['topographic__elevation'][grid.core_nodes] - grid.stacked_layers.z
+    z = grid.at_node["topographic__elevation"][grid.core_nodes] - grid.stacked_layers.z
 
-    return np.concatenate([z, grid.at_node['topographic__elevation'][grid.core_nodes][np.newaxis]])
+    return np.concatenate(
+        [z, grid.at_node["topographic__elevation"][grid.core_nodes][np.newaxis]]
+    )
 
 
-def _plot_horizontal_slice(ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs):
+def _plot_horizontal_slice(
+    ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs
+):
     """
     Plots a horizontal slice through a StackedLayers on a RasterModelGrid.
     """
     x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
-    values = _get_layer_values(grid, var, i_layer, i_class).reshape(grid.cell_grid_shape)
+    values = _get_layer_values(grid, var, i_layer, i_class).reshape(
+        grid.cell_grid_shape
+    )
 
-    vmin = None if 'norm' in kwargs else vmin
-    vmax = None if 'norm' in kwargs else vmax
+    vmin = None if "norm" in kwargs else vmin
+    vmax = None if "norm" in kwargs else vmax
 
     return ax.pcolormesh(x, y, values, vmin=vmin, vmax=vmax, shading=shading, **kwargs)
 
 
-def _plot_vertical_slice(ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs):
+def _plot_vertical_slice(
+    ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs
+):
     """
     Plots a vertical slice through a StackedLayers on a RasterModelGrid.
     """
     x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     z = _get_layer_elevation(grid).reshape(-1, *grid.cell_grid_shape)
-    dz = _select_sublayers(_get_variable_values(grid, 'dz'), np.sum, axis=2).reshape(-1, *grid.cell_grid_shape)
-    if (var == '_dz' or var == 'dz' or var == 'thickness') and i_class == np.sum:
+    dz = _select_sublayers(_get_variable_values(grid, "dz"), np.sum, axis=2).reshape(
+        -1, *grid.cell_grid_shape
+    )
+    if (var == "_dz" or var == "dz" or var == "thickness") and i_class == np.sum:
         values = dz
     else:
-        values = _select_sublayers(_get_variable_values(grid, var), i_class, axis=2).reshape(-1, *grid.cell_grid_shape)
+        values = _select_sublayers(
+            _get_variable_values(grid, var), i_class, axis=2
+        ).reshape(-1, *grid.cell_grid_shape)
 
     if i_x is None:
         i_x = slice(None)
-        if i_y == 'middle':
-            i_y = grid.cell_grid_shape[0]//2
+        if i_y == "middle":
+            i_y = grid.cell_grid_shape[0] // 2
         coords = np.tile(x[i_y, i_x], (2, 1))
     elif i_y is None:
         i_y = slice(None)
-        if i_x == 'middle':
-            i_x = grid.cell_grid_shape[1]//2
+        if i_x == "middle":
+            i_x = grid.cell_grid_shape[1] // 2
         coords = np.tile(y[i_y, i_x], (2, 1))
 
-    vmin = np.nanmin(values[..., i_y, i_x]) if vmin is None and 'norm' not in kwargs else vmin
-    vmax = np.nanmax(values[..., i_y, i_x]) if vmax is None and 'norm' not in kwargs else vmax
+    vmin = (
+        np.nanmin(values[..., i_y, i_x])
+        if vmin is None and "norm" not in kwargs
+        else vmin
+    )
+    vmax = (
+        np.nanmax(values[..., i_y, i_x])
+        if vmax is None and "norm" not in kwargs
+        else vmax
+    )
 
     c = []
     for i in range(len(values)):
         layer = values[i, i_y, i_x].astype(float)
         mask_layer(layer, dz[i, i_y, i_x])
-        ci = ax.pcolormesh(coords,
-                           z[i:i + 2, i_y, i_x],
-                           np.tile(layer, (2, 1)),
-                           shading=shading,
-                           vmin=vmin,
-                           vmax=vmax,
-                           **kwargs)
+        ci = ax.pcolormesh(
+            coords,
+            z[i : i + 2, i_y, i_x],
+            np.tile(layer, (2, 1)),
+            shading=shading,
+            vmin=vmin,
+            vmax=vmax,
+            **kwargs,
+        )
         c.append(ci)
 
     return c
@@ -155,17 +187,18 @@ def _plot_vertical_slice(ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, 
 ################################################################################
 # Plot
 
+
 def plot_layers(
     ax,
     grid,
     var,
-    i_x='middle',
+    i_x="middle",
     i_y=None,
     i_layer=None,
     i_class=None,
     vmin=None,
     vmax=None,
-    shading='gouraud',
+    shading="gouraud",
     **kwargs,
 ):
     """Plot a horizontal or vertical slice through a stack of layers on a raster
@@ -234,19 +267,29 @@ def plot_layers(
         https://arxiv.org/abs/2302.05272
     """
     if i_x is not None and i_y is not None:
-        warnings.warn("Both `i_x` and `i_y` are not None, but a slice can only be made along a single axis. `i_y` will be turned to None.")
+        warnings.warn(
+            "Both `i_x` and `i_y` are not None, but a slice can only be made along a single axis. `i_y` will be turned to None."
+        )
         i_y = None
     if i_x is not None and i_layer is not None:
-        warnings.warn("Both `i_x` and `i_layer` are not None, but a slice can only be made along a single axis. `i_layer` will be turned to None.")
+        warnings.warn(
+            "Both `i_x` and `i_layer` are not None, but a slice can only be made along a single axis. `i_layer` will be turned to None."
+        )
         i_layer = None
     if i_y is not None and i_layer is not None:
-        warnings.warn("Both `i_y` and `i_layer` are not None, but a slice can only be made along a single axis. `i_layer` will be turned to None.")
+        warnings.warn(
+            "Both `i_y` and `i_layer` are not None, but a slice can only be made along a single axis. `i_layer` will be turned to None."
+        )
         i_layer = None
 
     if i_x is not None or i_y is not None:
-        return _plot_vertical_slice(ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs)
+        return _plot_vertical_slice(
+            ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs
+        )
     elif i_layer is not None:
-        return _plot_horizontal_slice(ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs)
+        return _plot_horizontal_slice(
+            ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs
+        )
     else:
         raise Exception("At least one of `i_x`, `i_y`, or `i_layer` must not be None.")
 
@@ -262,13 +305,13 @@ class RasterModelGridLayerPlotterMixIn:
         self,
         ax,
         var,
-        i_x='middle',
+        i_x="middle",
         i_y=None,
         i_layer=None,
         i_class=None,
         vmin=None,
         vmax=None,
-        shading='gouraud',
+        shading="gouraud",
         **kwargs,
     ):
         """Plot a horizontal or vertical slice through a StackedLayers. This is
@@ -340,7 +383,9 @@ class RasterModelGridLayerPlotterMixIn:
         --------
         stratigrapy.plot.plot_layers
         """
-        return plot_layers(ax, self, var, i_x, i_y, i_layer, i_class, vmin, vmax, shading, **kwargs)
+        return plot_layers(
+            ax, self, var, i_x, i_y, i_layer, i_class, vmin, vmax, shading, **kwargs
+        )
 
 
 def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False):
@@ -395,15 +440,21 @@ def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False)
     y = np.tile(y, (len(z), 1, 1))
     x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     x = np.tile(x, (len(z), 1, 1))
-    dz = _select_sublayers(_get_variable_values(grid, 'dz'), np.sum, axis=2).reshape(-1, *grid.cell_grid_shape)
-    if (var == '_dz' or var == 'dz' or var == 'thickness') and i_class == np.sum:
+    dz = _select_sublayers(_get_variable_values(grid, "dz"), np.sum, axis=2).reshape(
+        -1, *grid.cell_grid_shape
+    )
+    if (var == "_dz" or var == "dz" or var == "thickness") and i_class == np.sum:
         layers = dz
     else:
-        layers = _select_sublayers(_get_variable_values(grid, var), i_class, axis=2).reshape(-1, *grid.cell_grid_shape)
+        layers = _select_sublayers(
+            _get_variable_values(grid, var), i_class, axis=2
+        ).reshape(-1, *grid.cell_grid_shape)
 
     for l in range(layers.shape[0]):
         for c in range(layers.shape[axis]):
-            slices = tuple(slice(None) if i != axis else c for i in range(1, layers.ndim))
+            slices = tuple(
+                slice(None) if i != axis else c for i in range(1, layers.ndim)
+            )
             mask_layer(layers[l, *slices], dz[l, *slices])
             if fill_nan == True and l > 0:
                 layers[l, np.isnan(layers[l])] = layers[l - 1, np.isnan(layers[l])]

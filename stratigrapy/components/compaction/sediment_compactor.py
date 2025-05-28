@@ -32,6 +32,7 @@ from ...utils import convert_to_array, format_fields_to_track
 ################################################################################
 # Component
 
+
 class SedimentCompactor(Component):
     """Compaction of sediments in a StackedLayers.
 
@@ -74,7 +75,7 @@ class SedimentCompactor(Component):
         self,
         grid,
         initial_porosity=0.5,
-        efolding_thickness=1000.,
+        efolding_thickness=1000.0,
         fields_to_track=None,
     ):
         """
@@ -94,35 +95,44 @@ class SedimentCompactor(Component):
 
         # Parameters
         self.initial_porosity = convert_to_array(initial_porosity)
-        if 'sediment__porosity' not in grid.at_node:
-            _ = grid.add_field('sediment__porosity',
-                               np.full((grid.number_of_nodes, len(self.initial_porosity)),
-                                       self.initial_porosity))
+        if "sediment__porosity" not in grid.at_node:
+            _ = grid.add_field(
+                "sediment__porosity",
+                np.full(
+                    (grid.number_of_nodes, len(self.initial_porosity)),
+                    self.initial_porosity,
+                ),
+            )
         self.efolding_thickness = convert_to_array(efolding_thickness)
         self.fields_to_track = format_fields_to_track(fields_to_track)
-        if 'sediment__porosity' not in self.fields_to_track:
-            self.fields_to_track.append('sediment__porosity')
+        if "sediment__porosity" not in self.fields_to_track:
+            self.fields_to_track.append("sediment__porosity")
 
         # Physical fields
-        self._topography = grid.at_node['topographic__elevation']
+        self._topography = grid.at_node["topographic__elevation"]
         self._stratigraphy = grid.stacked_layers
 
         # Fields for compaction
         self._initial_thickness = np.zeros(self._stratigraphy.number_of_stacks)
 
     def run_one_step(self):
-        """Run the compactor for one timestep.
-        """
+        """Run the compactor for one timestep."""
         core_nodes = self._grid.core_nodes
 
         self._initial_thickness[:] = self._stratigraphy.thickness
 
-        _depth = self._stratigraphy.z[..., np.newaxis] # This is awfully slow
-        _depth[1:] = _depth[1:] - (_depth[1:] - _depth[:-1])/2.
-        _depth[0] /= 2.
-        porosity = self.initial_porosity*np.exp(-_depth/self.efolding_thickness) # This is awfully slow
-        porosity = np.minimum(self._stratigraphy['sediment__porosity'], porosity)
+        _depth = self._stratigraphy.z[..., np.newaxis]  # This is awfully slow
+        _depth[1:] = _depth[1:] - (_depth[1:] - _depth[:-1]) / 2.0
+        _depth[0] /= 2.0
+        porosity = self.initial_porosity * np.exp(
+            -_depth / self.efolding_thickness
+        )  # This is awfully slow
+        porosity = np.minimum(self._stratigraphy["sediment__porosity"], porosity)
 
-        self._stratigraphy['_dz'][:] *= (1. - self._stratigraphy['sediment__porosity'])/(1. - porosity)
-        self._stratigraphy['sediment__porosity'][:] = porosity
-        self._topography[core_nodes] -= self._initial_thickness - self._stratigraphy.thickness
+        self._stratigraphy["_dz"][:] *= (
+            1.0 - self._stratigraphy["sediment__porosity"]
+        ) / (1.0 - porosity)
+        self._stratigraphy["sediment__porosity"][:] = porosity
+        self._topography[core_nodes] -= (
+            self._initial_thickness - self._stratigraphy.thickness
+        )

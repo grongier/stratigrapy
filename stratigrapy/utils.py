@@ -29,6 +29,7 @@ import numpy as np
 ################################################################################
 # Array manipulation
 
+
 def convert_to_array(x):
     """
     Converts a scalar or an array-like to a NumPy array.
@@ -72,6 +73,7 @@ def reshape_to_match(x, shape):
 
 ################################################################################
 # Field manipulation
+
 
 def format_fields_to_track(fields_to_track):
     """

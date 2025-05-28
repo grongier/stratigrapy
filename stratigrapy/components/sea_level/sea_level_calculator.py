@@ -32,9 +32,9 @@ from ...utils import convert_to_array, match_array_lengths
 ################################################################################
 # Component
 
+
 class SeaLevelCalculator(Component):
-    """Calculate sea level based on a mixture of sinusoids.
-    """
+    """Calculate sea level based on a mixture of sinusoids."""
 
     _name = "SeaLevelCalculator"
 
@@ -70,11 +70,11 @@ class SeaLevelCalculator(Component):
     def __init__(
         self,
         grid,
-        wavelength=100000.,
-        time_shift=0.,
-        amplitude=5.,
-        mean=0.,
-        rate=0.,
+        wavelength=100000.0,
+        time_shift=0.0,
+        amplitude=5.0,
+        mean=0.0,
+        rate=0.0,
     ):
         """
         Parameters
@@ -101,19 +101,19 @@ class SeaLevelCalculator(Component):
         self.wavelength = convert_to_array(wavelength)
         self.time_shift = convert_to_array(time_shift)
         self.amplitude = convert_to_array(amplitude)
-        self.wavelength, self.time_shift, self.amplitude = match_array_lengths(self.wavelength,
-                                                                               self.time_shift,
-                                                                               self.amplitude)
+        self.wavelength, self.time_shift, self.amplitude = match_array_lengths(
+            self.wavelength, self.time_shift, self.amplitude
+        )
         self.mean = mean
         self.rate = rate
-        self._time = 0.
+        self._time = 0.0
 
         # Physical fields
-        self._topography = grid.at_node['topographic__elevation']
-        self._bathymetry = grid.at_node['bathymetric__depth']
+        self._topography = grid.at_node["topographic__elevation"]
+        self._bathymetry = grid.at_node["bathymetric__depth"]
 
         # Initialize the fields
-        self.run_one_step(0.)
+        self.run_one_step(0.0)
 
     def run_one_step(self, dt):
         """Run the calculator for one timestep, dt.
@@ -125,13 +125,19 @@ class SeaLevelCalculator(Component):
         """
         self._time += dt
 
-        sea_level = self.mean + self.rate*self._time
-        for wavelength, time_shift, amplitude in zip(self.wavelength, self.time_shift, self.amplitude):
-            sea_level += amplitude*np.sin(2.*np.pi*(self._time - time_shift)/wavelength)
-        self._grid.at_grid['sea_level__elevation'] = sea_level
+        sea_level = self.mean + self.rate * self._time
+        for wavelength, time_shift, amplitude in zip(
+            self.wavelength, self.time_shift, self.amplitude
+        ):
+            sea_level += amplitude * np.sin(
+                2.0 * np.pi * (self._time - time_shift) / wavelength
+            )
+        self._grid.at_grid["sea_level__elevation"] = sea_level
 
-        np.subtract(sea_level,
-                    self._topography,
-                    out=self._bathymetry,
-                    where=(self._topography < sea_level) &
-                          (self._grid.status_at_node == self._grid.BC_NODE_IS_CORE))
+        np.subtract(
+            sea_level,
+            self._topography,
+            out=self._bathymetry,
+            where=(self._topography < sea_level)
+            & (self._grid.status_at_node == self._grid.BC_NODE_IS_CORE),
+        )
