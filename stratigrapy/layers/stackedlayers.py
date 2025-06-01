@@ -665,6 +665,10 @@ class StackedLayers:
         self._reduce_attribute(self._attrs["_dz"], start, stop, step, n_blocks, reducer)
 
         self._number_of_layers -= n_removed
+        self._right_allocated = (
+            len(self._attrs["_dz"]) - self._first_layer - self._number_of_layers
+        )
+        self._left_allocated = self._first_layer
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(
             self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
@@ -672,9 +676,9 @@ class StackedLayers:
 
     def fuse(self, finalize=False, **kwds):
         """Fuse layers to save computational resources during runtime. Layers
-        are fused together based on `number_of_layers_to_fuse` and, once fused,
-        are not fused again. The top layers defined by `number_of_top_layers`
-        are not fused.
+        are fused together from the top based on `number_of_layers_to_fuse` and,
+        once fused, are not fused again. The top layers defined by
+        `number_of_top_layers` are not fused unless `finalize` is True.
 
         Parameters
         ----------
@@ -699,9 +703,9 @@ class StackedLayers:
                 ) // self.number_of_layers_to_fuse
             elif self.fuse_continuously == True and stop_fuse > start_fuse:
                 self.reduce(start_fuse, stop_fuse, **kwds)
-                # TODO: Doing it here means that fuse needs to be called
-                # multiple times when multiple components are used to get the
-                # proper behavior
+                # Increasing the number of sublayers here means that fuse needs
+                # to be called multiple times when multiple components are used
+                # to get the proper behavior
                 self._number_of_sublayers += 1
                 if self._number_of_sublayers == self.number_of_layers_to_fuse:
                     self._number_of_sublayers = 0

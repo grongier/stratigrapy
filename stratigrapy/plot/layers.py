@@ -452,10 +452,14 @@ def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False)
 
     for l in range(layers.shape[0]):
         for c in range(layers.shape[axis]):
-            slices = tuple(
-                slice(None) if i != axis else c for i in range(1, layers.ndim)
-            )
-            mask_layer(layers[l, *slices], dz[l, *slices])
+            # TODO: With pcolormesh, the plot looks cleaner when setting zero-
+            # thickness layers to NaN, but this creates problems with PyVista.
+            # Since `mask_layer` also process wedges for a better-looking plot,
+            # this needs to be double-checked.
+            # slices = tuple(
+            #     slice(None) if i != axis else c for i in range(1, layers.ndim)
+            # )
+            # mask_layer(layers[l, *slices], dz[l, *slices])
             if fill_nan == True and l > 0:
                 layers[l, np.isnan(layers[l])] = layers[l - 1, np.isnan(layers[l])]
 

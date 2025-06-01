@@ -60,7 +60,7 @@ class WaterDrivenDisplacer(_BaseStreamPower):
         critical_flux_sed=0.0,
         porosity=0.0,
         max_erosion_rate_sed=1e-2,
-        active_layer_rate=1e-2,
+        active_layer_rate=None,
         erodibility_br_cont=1e-10,
         erodibility_br_mar=1e-10,
         bedrock_composition=1.0,

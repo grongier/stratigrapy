@@ -61,7 +61,7 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         porosity=0.0,
         max_erosion_rate_sed=1e-2,
         max_erosion_rate_br=1e-2,
-        active_layer_rate=1e-2,
+        active_layer_rate=None,
         bedrock_composition=1.0,
         exponent_discharge=1.0,
         exponent_slope=1.0,
