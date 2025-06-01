@@ -35,17 +35,20 @@ from libc.math cimport NAN
 cpdef void mask_layer(
     cython.floating [:] layer,
     const cython.floating [:] thickness,
+    const bint mask_wedges,
+    const bint mask_null_layers,
 ) noexcept nogil:
     """Masks the parts of a layer with zero thickness."""
     cdef unsigned int i
 
     for i in range(len(thickness)):
         if thickness[i] == 0.:
-            if i > 0 and thickness[i - 1] > 0.:
+            if mask_wedges == True and i > 0 and thickness[i - 1] > 0.:
                 layer[i] = layer[i - 1]
-            elif i < len(thickness) - 1 and thickness[i + 1] > 0.:
+            elif mask_wedges == True and i < len(thickness) - 1 and thickness[i + 1] > 0.:
                 layer[i] = layer[i + 1]
-            elif ((i > 0 and thickness[i - 1] == 0. and i < len(thickness) - 1 and thickness[i + 1] == 0.)
-                or (i == 0 and thickness[i + 1] == 0.)
-                or (i == len(thickness) - 1 and thickness[i - 1] == 0.)):
+            elif (mask_null_layers == True
+                  and ((i > 0 and thickness[i - 1] == 0. and i < len(thickness) - 1 and thickness[i + 1] == 0.)
+                       or (i == 0 and thickness[i + 1] == 0.)
+                       or (i == len(thickness) - 1 and thickness[i - 1] == 0.))):
                 layer[i] = NAN

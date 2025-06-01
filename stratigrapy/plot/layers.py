@@ -126,7 +126,18 @@ def _plot_horizontal_slice(
 
 
 def _plot_vertical_slice(
-    ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs
+    ax,
+    grid,
+    var,
+    i_x,
+    i_y,
+    i_class,
+    mask_wedges,
+    mask_null_layers,
+    vmin,
+    vmax,
+    shading,
+    **kwargs,
 ):
     """
     Plots a vertical slice through a StackedLayers on a RasterModelGrid.
@@ -169,7 +180,7 @@ def _plot_vertical_slice(
     c = []
     for i in range(len(values)):
         layer = values[i, i_y, i_x].astype(float)
-        mask_layer(layer, dz[i, i_y, i_x])
+        mask_layer(layer, dz[i, i_y, i_x], mask_wedges, mask_null_layers)
         ci = ax.pcolormesh(
             coords,
             z[i : i + 2, i_y, i_x],
@@ -196,6 +207,8 @@ def plot_layers(
     i_y=None,
     i_layer=None,
     i_class=None,
+    mask_wedges=False,
+    mask_null_layers=True,
     vmin=None,
     vmax=None,
     shading="gouraud",
@@ -241,6 +254,15 @@ def plot_layers(
     i_class : int or callable, optional
         The index to select the lithology to plot. A callable will merge the all
         the lithologies together (e.g., numpy.mean or numpy.sum).
+    mask_wedges : bool, optional
+        If True, wedges, where a layer pinches out to a null thickness, are
+        displayed with the value of the non-null node. This is useful when
+        displaying the composition of a given class for instance, and avoid
+        perturbing the visualization with a pointless null composition.
+    mask_null_layers : bool, optional
+        If True, nodes of null thickness that are surrounded with null-thickness
+        nodes are turned to NaN. This avoid perturbing the display of the
+        stratigraphy, where null-thickness layers can still be visible.
     vmin : float, optional
         The minimum value to use when plotting the variable. If None, uses the
         minimum value of the variable.
@@ -284,7 +306,18 @@ def plot_layers(
 
     if i_x is not None or i_y is not None:
         return _plot_vertical_slice(
-            ax, grid, var, i_x, i_y, i_class, vmin, vmax, shading, **kwargs
+            ax,
+            grid,
+            var,
+            i_x,
+            i_y,
+            i_class,
+            mask_wedges,
+            mask_null_layers,
+            vmin,
+            vmax,
+            shading,
+            **kwargs,
         )
     elif i_layer is not None:
         return _plot_horizontal_slice(
@@ -309,6 +342,8 @@ class RasterModelGridLayerPlotterMixIn:
         i_y=None,
         i_layer=None,
         i_class=None,
+        mask_wedges=False,
+        mask_null_layers=True,
         vmin=None,
         vmax=None,
         shading="gouraud",
@@ -354,6 +389,15 @@ class RasterModelGridLayerPlotterMixIn:
         i_class : int or callable, optional
             The index to select the lithology to plot. A callable will merge the all
             the lithologies together (e.g., numpy.mean or numpy.sum).
+        mask_wedges : bool, optional
+            If True, wedges, where a layer pinches out to a null thickness, are
+            displayed with the value of the non-null node. This is useful when
+            displaying the composition of a given class for instance, and avoid
+            perturbing the visualization with a pointless null composition.
+        mask_null_layers : bool, optional
+            If True, nodes of null thickness that are surrounded with null-thickness
+            nodes are turned to NaN. This avoid perturbing the display of the
+            stratigraphy, where null-thickness layers can still be visible.
         vmin : float, optional
             The minimum value to use when plotting the variable. If None, uses the
             minimum value of the variable.
@@ -384,11 +428,31 @@ class RasterModelGridLayerPlotterMixIn:
         stratigrapy.plot.plot_layers
         """
         return plot_layers(
-            ax, self, var, i_x, i_y, i_layer, i_class, vmin, vmax, shading, **kwargs
+            ax,
+            self,
+            var,
+            i_x,
+            i_y,
+            i_layer,
+            i_class,
+            mask_wedges,
+            mask_null_layers,
+            vmin,
+            vmax,
+            shading,
+            **kwargs,
         )
 
 
-def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False):
+def extract_tie_centered_layers(
+    grid,
+    var,
+    i_class=None,
+    axis=2,
+    mask_wedges=False,
+    mask_null_layers=False,
+    fill_nan=False,
+):
     """Extract the layers coordinates and values of a variable for plotting, in
     particular with PyVista.
 
@@ -411,6 +475,15 @@ def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False)
     axis : int
         The axis along which to post-process the layers to manage pinching-out
         cells. By default, the x-axis is used.
+    mask_wedges : bool, optional
+        If True, wedges, where a layer pinches out to a null thickness, are
+        displayed with the value of the non-null node. This is useful when
+        displaying the composition of a given class for instance, and avoid
+        perturbing the visualization with a pointless null composition.
+    mask_null_layers : bool, optional
+        If True, nodes of null thickness that are surrounded with null-thickness
+        nodes are turned to NaN. This avoid perturbing the display of the
+        stratigraphy, where null-thickness layers can still be visible.
     fill_nan: bool
         If True, fills the NaN values of a layer with the values of the layer
         below.
@@ -452,14 +525,12 @@ def extract_tie_centered_layers(grid, var, i_class=None, axis=2, fill_nan=False)
 
     for l in range(layers.shape[0]):
         for c in range(layers.shape[axis]):
-            # TODO: With pcolormesh, the plot looks cleaner when setting zero-
-            # thickness layers to NaN, but this creates problems with PyVista.
-            # Since `mask_layer` also process wedges for a better-looking plot,
-            # this needs to be double-checked.
-            # slices = tuple(
-            #     slice(None) if i != axis else c for i in range(1, layers.ndim)
-            # )
-            # mask_layer(layers[l, *slices], dz[l, *slices])
+            slices = tuple(
+                slice(None) if i != axis else c for i in range(1, layers.ndim)
+            )
+            mask_layer(
+                layers[l, *slices], dz[l, *slices], mask_wedges, mask_null_layers
+            )
             if fill_nan == True and l > 0:
                 layers[l, np.isnan(layers[l])] = layers[l - 1, np.isnan(layers[l])]
 
