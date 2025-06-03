@@ -860,6 +860,18 @@ class StackedLayers:
         if number_of_filled_layers < self.number_of_layers:
             self._number_of_layers = number_of_filled_layers
 
+    def remove_last_layers(self, number_of_layers=1):
+        """Remove the last layers at the top of the stack
+
+        Parameters
+        ----------
+        number_of_layers : int
+            The number of layers to remove
+        """
+        self._number_of_layers -= number_of_layers
+        self._right_allocated += number_of_layers
+        self._surface_index -= number_of_layers
+
     def is_compatible(self, dz, **kwds):
         """Check if a new layer is compatible with the existing top layer.
 

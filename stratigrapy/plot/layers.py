@@ -55,7 +55,7 @@ def _get_variable_values(grid, var):
         return grid.stacked_layers[var]
 
 
-def _select_sublayers(layers, i, axis=2, indices=None):
+def _select_sublayers(layers, i, axis=2, dz=None, indices=None):
     """
     Gets the values of a subselection of a stack of layers.
     """
@@ -72,6 +72,11 @@ def _select_sublayers(layers, i, axis=2, indices=None):
             for j in range(layers.ndim)
         )
         return layers[slices]
+    elif i == "weighted_mean" and dz is not None:
+        thickness = np.sum(dz, axis=axis, keepdims=True)
+        composition = np.zeros_like(dz)
+        np.divide(dz, thickness, out=composition, where=thickness > 0.0)
+        return np.sum(layers * composition, axis=axis)
     elif i == "top" and indices is not None:
         return np.take_along_axis(
             layers, reshape_to_match(indices, layers.shape), axis=axis
@@ -84,6 +89,16 @@ def _get_layer_values(grid, var, i_layer, i_class):
     """
     Gets the values of a layer.
     """
+    if i_class == "weighted_mean":
+        dz = _select_sublayers(
+            _get_variable_values(grid, "_dz"),
+            i_layer,
+            axis=0,
+            indices=grid.stacked_layers.surface_index,
+        )
+    else:
+        dz = None
+
     return _select_sublayers(
         _select_sublayers(
             _get_variable_values(grid, var),
@@ -93,6 +108,7 @@ def _get_layer_values(grid, var, i_layer, i_class):
         ),
         i_class,
         axis=1,
+        dz=dz,
     )
 
 
@@ -108,7 +124,7 @@ def _get_layer_elevation(grid):
 
 
 def _plot_horizontal_slice(
-    ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs
+    ax, grid, var, i_layer, i_class, mask_value, vmin, vmax, shading, **kwargs
 ):
     """
     Plots a horizontal slice through a StackedLayers on a RasterModelGrid.
@@ -118,6 +134,8 @@ def _plot_horizontal_slice(
     values = _get_layer_values(grid, var, i_layer, i_class).reshape(
         grid.cell_grid_shape
     )
+    if mask_value is not None:
+        values[values == mask_value] = np.nan
 
     vmin = None if "norm" in kwargs else vmin
     vmax = None if "norm" in kwargs else vmax
@@ -134,6 +152,7 @@ def _plot_vertical_slice(
     i_class,
     mask_wedges,
     mask_null_layers,
+    mask_value,
     vmin,
     vmax,
     shading,
@@ -145,15 +164,20 @@ def _plot_vertical_slice(
     x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     z = _get_layer_elevation(grid).reshape(-1, *grid.cell_grid_shape)
-    dz = _select_sublayers(_get_variable_values(grid, "dz"), np.sum, axis=2).reshape(
-        -1, *grid.cell_grid_shape
-    )
-    if (var == "_dz" or var == "dz" or var == "thickness") and i_class == np.sum:
+    _dz = _get_variable_values(grid, "dz")
+    dz = _select_sublayers(_dz, np.sum, axis=2).reshape(-1, *grid.cell_grid_shape)
+    if (
+        isinstance(var, np.ndarray) == False
+        and (var == "_dz" or var == "dz" or var == "thickness")
+        and i_class == np.sum
+    ):
         values = dz
     else:
         values = _select_sublayers(
-            _get_variable_values(grid, var), i_class, axis=2
+            _get_variable_values(grid, var), i_class, axis=2, dz=_dz
         ).reshape(-1, *grid.cell_grid_shape)
+    if mask_value is not None:
+        values[values == mask_value] = np.nan
 
     if i_x is None:
         i_x = slice(None)
@@ -209,6 +233,7 @@ def plot_layers(
     i_class=None,
     mask_wedges=False,
     mask_null_layers=True,
+    mask_value=None,
     vmin=None,
     vmax=None,
     shading="gouraud",
@@ -253,7 +278,9 @@ def plot_layers(
         axis, so `i_layer` is incompatible with `i_x` and `i_y`.
     i_class : int or callable, optional
         The index to select the lithology to plot. A callable will merge the all
-        the lithologies together (e.g., numpy.mean or numpy.sum).
+        the lithologies together (e.g., numpy.mean or numpy.sum). Using
+        'weighted_mean' will average the lithologies weighted by their respective
+        thicknesses.
     mask_wedges : bool, optional
         If True, wedges, where a layer pinches out to a null thickness, are
         displayed with the value of the non-null node. This is useful when
@@ -263,6 +290,8 @@ def plot_layers(
         If True, nodes of null thickness that are surrounded with null-thickness
         nodes are turned to NaN. This avoid perturbing the display of the
         stratigraphy, where null-thickness layers can still be visible.
+    mask_value : float, optional
+        A value of the variable being plotted to mask, i.e., to turn to NaN.
     vmin : float, optional
         The minimum value to use when plotting the variable. If None, uses the
         minimum value of the variable.
@@ -314,6 +343,7 @@ def plot_layers(
             i_class,
             mask_wedges,
             mask_null_layers,
+            mask_value,
             vmin,
             vmax,
             shading,
@@ -321,7 +351,7 @@ def plot_layers(
         )
     elif i_layer is not None:
         return _plot_horizontal_slice(
-            ax, grid, var, i_layer, i_class, vmin, vmax, shading, **kwargs
+            ax, grid, var, i_layer, i_class, mask_value, vmin, vmax, shading, **kwargs
         )
     else:
         raise Exception("At least one of `i_x`, `i_y`, or `i_layer` must not be None.")
@@ -344,6 +374,7 @@ class RasterModelGridLayerPlotterMixIn:
         i_class=None,
         mask_wedges=False,
         mask_null_layers=True,
+        mask_value=None,
         vmin=None,
         vmax=None,
         shading="gouraud",
@@ -388,7 +419,9 @@ class RasterModelGridLayerPlotterMixIn:
             axis, so `i_layer` is incompatible with `i_x` and `i_y`.
         i_class : int or callable, optional
             The index to select the lithology to plot. A callable will merge the all
-            the lithologies together (e.g., numpy.mean or numpy.sum).
+            the lithologies together (e.g., numpy.mean or numpy.sum). Using
+            'weighted_mean' will average the lithologies weighted by their respective
+            thicknesses.
         mask_wedges : bool, optional
             If True, wedges, where a layer pinches out to a null thickness, are
             displayed with the value of the non-null node. This is useful when
@@ -398,6 +431,8 @@ class RasterModelGridLayerPlotterMixIn:
             If True, nodes of null thickness that are surrounded with null-thickness
             nodes are turned to NaN. This avoid perturbing the display of the
             stratigraphy, where null-thickness layers can still be visible.
+        mask_value : float, optional
+            A value of the variable being plotted to mask, i.e., to turn to NaN.
         vmin : float, optional
             The minimum value to use when plotting the variable. If None, uses the
             minimum value of the variable.
@@ -437,6 +472,7 @@ class RasterModelGridLayerPlotterMixIn:
             i_class,
             mask_wedges,
             mask_null_layers,
+            mask_value,
             vmin,
             vmax,
             shading,
@@ -451,6 +487,7 @@ def extract_tie_centered_layers(
     axis=2,
     mask_wedges=False,
     mask_null_layers=False,
+    mask_value=None,
     fill_nan=False,
 ):
     """Extract the layers coordinates and values of a variable for plotting, in
@@ -471,7 +508,9 @@ def extract_tie_centered_layers(
         proportion of each lithology.
     i_class : int or callable, optional
         The index to select the lithology to plot. A callable will merge the all
-        the lithologies together (e.g., numpy.mean or numpy.sum).
+        the lithologies together (e.g., numpy.mean or numpy.sum). Using
+        'weighted_mean' will average the lithologies weighted by their respective
+        thicknesses.
     axis : int
         The axis along which to post-process the layers to manage pinching-out
         cells. By default, the x-axis is used.
@@ -484,6 +523,8 @@ def extract_tie_centered_layers(
         If True, nodes of null thickness that are surrounded with null-thickness
         nodes are turned to NaN. This avoid perturbing the display of the
         stratigraphy, where null-thickness layers can still be visible.
+    mask_value : float, optional
+        A value of the variable being plotted to mask, i.e., to turn to NaN.
     fill_nan: bool
         If True, fills the NaN values of a layer with the values of the layer
         below.
@@ -513,15 +554,20 @@ def extract_tie_centered_layers(
     y = np.tile(y, (len(z), 1, 1))
     x = grid.x_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)
     x = np.tile(x, (len(z), 1, 1))
-    dz = _select_sublayers(_get_variable_values(grid, "dz"), np.sum, axis=2).reshape(
-        -1, *grid.cell_grid_shape
-    )
-    if (var == "_dz" or var == "dz" or var == "thickness") and i_class == np.sum:
+    _dz = _get_variable_values(grid, "dz")
+    dz = _select_sublayers(_dz, np.sum, axis=2).reshape(-1, *grid.cell_grid_shape)
+    if (
+        isinstance(var, np.ndarray) == False
+        and (var == "_dz" or var == "dz" or var == "thickness")
+        and i_class == np.sum
+    ):
         layers = dz
     else:
         layers = _select_sublayers(
-            _get_variable_values(grid, var), i_class, axis=2
+            _get_variable_values(grid, var), i_class, axis=2, dz=_dz
         ).reshape(-1, *grid.cell_grid_shape)
+    if mask_value is not None:
+        layers[layers == mask_value] = np.nan
 
     for l in range(layers.shape[0]):
         for c in range(layers.shape[axis]):
