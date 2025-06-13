@@ -346,14 +346,11 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
 
 
 class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
-    """A grid of Voronoi Delaunay cells with a structured perimeter layout.
+    """A grid of hexagonal cells.
 
-    This inherited class implements a irregular 2D grid with Voronoi Delaunay cells and
-    irregular patches. It is a special type of :class:`~.VoronoiDelaunayGrid` grid in which
-    the initial set of points is arranged in a fixed lattice (e.g. like a
-    :class:`~.RasterModelGrid`), named here "layout", and the core points are
-    then moved a random distance from their initial positions, bounded by a user-supplied
-    threshold.
+    This inherited class implements a regular 2D grid with hexagonal cells and
+    triangular patches. It is a special type of VoronoiDelaunay grid in which
+    the initial set of points is arranged in a triangular/hexagonal lattice.
     """
 
     def __init__(
