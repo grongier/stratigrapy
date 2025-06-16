@@ -162,7 +162,7 @@ class _BaseDisplacer(_BaseHandler):
         self.porosity = convert_to_array(porosity)
         self.max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
         self.active_layer_rate = (
-            max_erosion_rate if active_layer_rate is None else active_layer_rate
+            self.max_erosion_rate if active_layer_rate is None else active_layer_rate
         )
 
         # Physical fields
@@ -378,7 +378,7 @@ class _BaseStreamPower(_BaseDiffuser):
         critical_flux=0.0,
         porosity=0.0,
         max_erosion_rate=1e-2,
-        active_layer_rate=1e-2,
+        active_layer_rate=None,
         bedrock_composition=1.0,
         exponent_discharge=1.0,
         exponent_slope=1.0,

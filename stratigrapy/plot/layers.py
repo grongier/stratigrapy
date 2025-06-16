@@ -256,7 +256,8 @@ def plot_layers(
         The variable to plot as color, which can be on the StackedLayers or as
         a separate array. The keywords 'dz' or 'thickness' can be used to plot
         the layer thickness; the keyword 'composition' can be used to plot the
-        proportion of each lithology.
+        proportion of each lithology; the keywords 'most_frequent_class' or
+        'most_frequent' can be to plot the most frequent lithology.
     i_x : int, str, or callable, optional
         The index at which to slice vertically the layers along the grid's x
         axis. The keyword 'middle' will slice at the middle of the axis. A
@@ -397,7 +398,8 @@ class RasterModelGridLayerPlotterMixIn:
             The variable to plot as color, which can be on the StackedLayers or as
             a separate array. The keywords 'dz' or 'thickness' can be used to plot
             the layer thickness; the keyword 'composition' can be used to plot the
-            proportion of each lithology.
+            proportion of each lithology; the keywords 'most_frequent_class' or
+            'most_frequent' can be to plot the most frequent lithology.
         i_x : int, str, or callable, optional
             The index at which to slice vertically the layers along the grid's x
             axis. The keyword 'middle' will slice at the middle of the axis. A

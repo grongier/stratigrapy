@@ -134,7 +134,7 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         # Parameters
         self.max_erosion_rate_br = max_erosion_rate_br
         self.active_layer_rate = (
-            max(max_erosion_rate_sed, max_erosion_rate_br)
+            max(self.max_erosion_rate, max_erosion_rate_br)
             if active_layer_rate is None
             else active_layer_rate
         )
