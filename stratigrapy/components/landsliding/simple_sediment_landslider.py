@@ -135,7 +135,9 @@ class SimpleSedimentLandslider(_BaseRouter):
         # Parameters
         self._repose_angle_cont = convert_to_array(repose_angle_cont)
         self._repose_angle_mar = convert_to_array(repose_angle_mar)
-        self._max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
+        self._max_erosion_rate = (
+            np.inf if max_erosion_rate is None else max_erosion_rate
+        )
         self._active_layer_rate = (
             self._max_erosion_rate if active_layer_rate is None else active_layer_rate
         )
@@ -188,8 +190,8 @@ class SimpleSedimentLandslider(_BaseRouter):
             if "sediment__porosity" in self._stratigraphy._attrs
             else self._porosity
         )
-        self._active_layer[self._grid.core_nodes] = (
-            self._stratigraphy.get_active_layer(max_thickness_sed, porosity)
+        self._active_layer[self._grid.core_nodes] = self._stratigraphy.get_active_layer(
+            max_thickness_sed, porosity
         )
 
     def _calculate_active_layer_composition(self, dt):
@@ -197,7 +199,7 @@ class SimpleSedimentLandslider(_BaseRouter):
         Calculates the composition of the active layer based on the sediments
         and the bedrock.
         """
-        self._calculate_active_layer(self._active_layer_rate*dt)
+        self._calculate_active_layer(self._active_layer_rate * dt)
 
         self._active_layer_thickness[:] = np.sum(
             self._active_layer, axis=1, keepdims=True
@@ -252,8 +254,8 @@ class SimpleSedimentLandslider(_BaseRouter):
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
         if self._max_erosion_rate != self._active_layer_rate:
-            self._calculate_active_layer(self._max_erosion_rate*dt, 0.)
-        self._max_sediment_outflux[:, 0] = cell_area*self._active_layer/dt
+            self._calculate_active_layer(self._max_erosion_rate * dt, 0.0)
+        self._max_sediment_outflux[:, 0] = cell_area * self._active_layer / dt
 
         self._sediment_outflux[self._sediment_outflux > self._max_sediment_outflux] = (
             self._max_sediment_outflux[
@@ -276,7 +278,6 @@ class SimpleSedimentLandslider(_BaseRouter):
             If False, create a new layer and deposit in that layer; otherwise,
             deposition occurs in the existing layer.
         """
-        
         self._calculate_sediment_outflux(dt)
         self._threshold_sediment_outflux(dt)
 

@@ -111,19 +111,21 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
         self._neighbors = grid.active_adjacent_nodes_at_node
         n_neighbors = self._neighbors.shape[1]
 
-        super().__init__(grid=grid,
-                               number_of_neighbors=n_neighbors,
-                                diffusivity_cont=diffusivity_cont,
-                                diffusivity_mar=diffusivity_mar,
-                                wave_base=wave_base,
-                                porosity=porosity,
-                                max_erosion_rate_sed=max_erosion_rate_sed,
-                                active_layer_rate_sed=active_layer_rate_sed,
-                                bedrock_composition=bedrock_composition,
-                                max_erosion_rate_br=max_erosion_rate_br,
-                                active_layer_rate_br=active_layer_rate_br,
-                                exponent_slope=exponent_slope,
-                                fields_to_track=fields_to_track)
+        super().__init__(
+            grid=grid,
+            number_of_neighbors=n_neighbors,
+            diffusivity_cont=diffusivity_cont,
+            diffusivity_mar=diffusivity_mar,
+            wave_base=wave_base,
+            porosity=porosity,
+            max_erosion_rate_sed=max_erosion_rate_sed,
+            active_layer_rate_sed=active_layer_rate_sed,
+            bedrock_composition=bedrock_composition,
+            max_erosion_rate_br=max_erosion_rate_br,
+            active_layer_rate_br=active_layer_rate_br,
+            exponent_slope=exponent_slope,
+            fields_to_track=fields_to_track,
+        )
 
         # Field for the slopes
         n_nodes = grid.number_of_nodes
@@ -174,12 +176,17 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
         self._calculate_sediment_outflux(dt)
-        if self._max_erosion_rate_sed != self._active_layer_rate_sed or self.max_erosion_rate_br != self._active_layer_rate_br:
-            self._calculate_active_layer(self._max_erosion_rate_sed*dt, self.max_erosion_rate_br*dt)
-        self._max_sediment_outflux[:] = cell_area*self._active_layer[:, 0]/dt
+        if (
+            self._max_erosion_rate_sed != self._active_layer_rate_sed
+            or self.max_erosion_rate_br != self._active_layer_rate_br
+        ):
+            self._calculate_active_layer(
+                self._max_erosion_rate_sed * dt, self.max_erosion_rate_br * dt
+            )
+        self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
 
         self._node_order = np.argsort(self._topography)
-        self._sediment_influx[:] = 0.
+        self._sediment_influx[:] = 0.0
         calculate_sediment_influx(
             self._node_order,
             self._neighbors,

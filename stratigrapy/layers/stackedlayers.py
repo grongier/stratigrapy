@@ -427,10 +427,9 @@ class StackedLayers:
         of shape `(number_of_stacks, )`.
         """
         return np.sum(self.dz, axis=(0, 2))
-    
+
     def _get_thickness(self, axis, porosity=None):
-        """Total sediment thickness of the columns, removing the porosity if given.
-        """
+        """Total sediment thickness of the columns, removing the porosity if given."""
         if porosity is None:
             return np.sum(self.dz, axis=axis)
         elif isinstance(porosity, str) and porosity in self._attrs:

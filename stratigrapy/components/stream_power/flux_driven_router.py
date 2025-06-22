@@ -208,7 +208,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             max_erosion_rate_sed=max_erosion_rate_sed,
             active_layer_rate_sed=active_layer_rate_sed,
             bedrock_composition=bedrock_composition,
-            max_erosion_rate_br=0.,
+            max_erosion_rate_br=0.0,
             active_layer_rate_br=active_layer_rate_br,
             exponent_discharge=exponent_discharge,
             exponent_slope=exponent_slope,
@@ -270,7 +270,9 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._erosion_flux_sed[:] -= self._critical_flux * (
             1.0 - np.exp(-self._ratio_critical_outflux)
         )
-        self._ratio_excess_thickness[self._grid.core_nodes, 0, 0] = np.exp(-self._stratigraphy.thickness/self.critical_thickness)
+        self._ratio_excess_thickness[self._grid.core_nodes, 0, 0] = np.exp(
+            -self._stratigraphy.thickness / self.critical_thickness
+        )
         self._erosion_flux_sed[:] *= 1.0 - self._ratio_excess_thickness
 
     def _calculate_bedrock_flux(self):
@@ -318,8 +320,8 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
 
         self._calculate_sediment_flux(dt)
         if self._max_erosion_rate_sed != self._active_layer_rate_sed:
-            self._calculate_active_layer(self._max_erosion_rate_sed*dt, 0.)
-        self._max_sediment_outflux[:] = cell_area*self._active_layer[:, 0]/dt
+            self._calculate_active_layer(self._max_erosion_rate_sed * dt, 0.0)
+        self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
         self._calculate_bedrock_flux()
 
         self._sediment_influx[:] = self._sediment_input

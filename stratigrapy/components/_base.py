@@ -135,11 +135,6 @@ class _BaseMover(_BaseHandler):
         # Physical fields
         self._topography = grid.at_node["topographic__elevation"]
 
-        # Fields for updating the physical fields
-        n_nodes = grid.number_of_nodes
-        n_sediments = self._stratigraphy.number_of_classes
-        self._sediment_thickness = np.zeros((n_nodes, n_sediments))
-
     def _update_physical_fields(self, dt, update_compatible=False, update=False):
         """
         Applies the sediment fluxes to the topography and stratigraphy.
@@ -249,14 +244,20 @@ class _BaseDiffuser(_BaseMover):
         self._K_mar = convert_to_array(diffusivity_mar)
         self.wave_base = wave_base
         self._porosity = convert_to_array(porosity)
-        self._max_erosion_rate_sed = np.inf if max_erosion_rate_sed is None else max_erosion_rate_sed
+        self._max_erosion_rate_sed = (
+            np.inf if max_erosion_rate_sed is None else max_erosion_rate_sed
+        )
         self._active_layer_rate_sed = (
-            self._max_erosion_rate_sed if active_layer_rate_sed is None else active_layer_rate_sed
+            self._max_erosion_rate_sed
+            if active_layer_rate_sed is None
+            else active_layer_rate_sed
         )
         self._bedrock_composition = convert_to_array(bedrock_composition)
         self.max_erosion_rate_br = max_erosion_rate_br
         self._active_layer_rate_br = (
-            self.max_erosion_rate_br if active_layer_rate_br is None else active_layer_rate_br
+            self.max_erosion_rate_br
+            if active_layer_rate_br is None
+            else active_layer_rate_br
         )
         self._n = exponent_slope
 
@@ -294,24 +295,40 @@ class _BaseDiffuser(_BaseMover):
         self._active_layer[self._grid.core_nodes, 0] = (
             self._stratigraphy.get_active_layer(max_thickness_sed, porosity)
         )
-        if max_thickness_br > 0.:
+        if max_thickness_br > 0.0:
             self._active_layer_thickness[:] = np.sum(
                 self._active_layer, axis=2, keepdims=True
             )
-            #TODO: This seems to really slow things down
-            self._total_layer_thickness[self._grid.core_nodes, 0, 0] = self._stratigraphy.get_thickness(porosity)
-            np.add(self._active_layer,
-                self._bedrock_composition * ((1.0 - self._porosity) * max_thickness_br - self._active_layer_thickness),
+            # TODO: This seems to really slow things down
+            self._total_layer_thickness[self._grid.core_nodes, 0, 0] = (
+                self._stratigraphy.get_thickness(porosity)
+            )
+            np.add(
+                self._active_layer,
+                self._bedrock_composition
+                * (
+                    (1.0 - self._porosity) * max_thickness_br
+                    - self._active_layer_thickness
+                ),
                 out=self._active_layer,
-                where=(np.abs(self._active_layer_thickness - self._total_layer_thickness) < 1e-10) & (self._active_layer_thickness < (1.0 - self._porosity) * max_thickness_br))
+                where=(
+                    np.abs(self._active_layer_thickness - self._total_layer_thickness)
+                    < 1e-10
+                )
+                & (
+                    self._active_layer_thickness
+                    < (1.0 - self._porosity) * max_thickness_br
+                ),
+            )
 
     def _calculate_active_layer_composition(self, dt):
         """
         Calculates the composition of the active layer based on the sediments
         and the bedrock.
         """
-        self._calculate_active_layer(self._active_layer_rate_sed*dt,
-                                     self._active_layer_rate_br*dt)
+        self._calculate_active_layer(
+            self._active_layer_rate_sed * dt, self._active_layer_rate_br * dt
+        )
 
         self._active_layer_thickness[:] = np.sum(
             self._active_layer, axis=2, keepdims=True

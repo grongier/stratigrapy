@@ -29,6 +29,7 @@ import numpy as np
 ################################################################################
 # Flux divergence
 
+
 def calc_mult_flux_div_at_node(grid, unit_flux, out=None):
     """Calculate the divergences of link-based fluxes at nodes.
 
@@ -96,6 +97,9 @@ def _calc_mult_net_face_flux_at_cell(grid, unit_flux_at_faces, out=None):
 
     total_flux = unit_flux_at_faces * grid.length_of_face[:, np.newaxis]
     for c in range(grid.link_dirs_at_node.shape[1]):
-        out -= total_flux[grid.faces_at_cell[:, c]] * grid.link_dirs_at_node[grid.node_at_cell, c:c + 1]
+        out -= (
+            total_flux[grid.faces_at_cell[:, c]]
+            * grid.link_dirs_at_node[grid.node_at_cell, c : c + 1]
+        )
 
     return out

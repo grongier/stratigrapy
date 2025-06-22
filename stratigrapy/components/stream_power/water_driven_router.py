@@ -258,9 +258,14 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._normalize_water_flux()
 
         self._calculate_sediment_outflux(dt)
-        if self._max_erosion_rate_sed != self._active_layer_rate_sed or self.max_erosion_rate_br != self._active_layer_rate_br:
-            self._calculate_active_layer(self._max_erosion_rate_sed*dt, self.max_erosion_rate_br*dt)
-        self._max_sediment_outflux[:] = cell_area*self._active_layer[:, 0]/dt
+        if (
+            self._max_erosion_rate_sed != self._active_layer_rate_sed
+            or self.max_erosion_rate_br != self._active_layer_rate_br
+        ):
+            self._calculate_active_layer(
+                self._max_erosion_rate_sed * dt, self.max_erosion_rate_br * dt
+            )
+        self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
 
         self._sediment_influx[:] = self._sediment_input
         calculate_sediment_influx(
