@@ -88,15 +88,13 @@ class BedrockWeatherer(_BaseHandler):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        self.bedrock_composition = convert_to_array(bedrock_composition)
-        n_sediments = len(self.bedrock_composition)
-
-        super().__init__(grid, n_sediments, fields_to_track)
+        super().__init__(grid, fields_to_track)
 
         # Parameters
         self.max_weathering_rate = max_weathering_rate
         self.weathering_decay_depth = weathering_decay_depth
         self.wave_base = wave_base
+        self.bedrock_composition = convert_to_array(bedrock_composition)
 
         # Physical fields
         self._bathymetry = grid.at_node["bathymetric__depth"]
@@ -116,9 +114,7 @@ class BedrockWeatherer(_BaseHandler):
             -self._stratigraphy.thickness / self.weathering_decay_depth
         )
 
-    def run_one_step(
-        self, dt, update_compatible=False, update=False, update_time=False
-    ):
+    def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the weatherer for one timestep, dt.
 
         Parameters
@@ -133,17 +129,12 @@ class BedrockWeatherer(_BaseHandler):
             If false, a new layer is addded at each iteration to the StackedLayers
             of the grid; otherwise, the first layer is simply updated to save
             memory.
-        update_time : bool, optional
-            If false, time is updated when `update` is true; otherwise the original
-            time of the layer is preserved.
         """
         core_nodes = self._grid.core_nodes
-
-        self._time += dt
 
         self._calculate_weathering_depth(dt)
         self._sediment_thickness[core_nodes] = (
             self.bedrock_composition * self._weathering_depth[core_nodes]
         )
 
-        self._update_stratigraphy(update_compatible, update, True)
+        self._update_stratigraphy(dt, update_compatible, update, True)

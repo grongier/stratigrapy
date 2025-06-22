@@ -138,6 +138,5 @@ class SeaLevelCalculator(Component):
             sea_level,
             self._topography,
             out=self._bathymetry,
-            where=(self._topography < sea_level)
-            & (self._grid.status_at_node == self._grid.BC_NODE_IS_CORE),
+            where=(self._topography < sea_level), # & (self._grid.status_at_node == self._grid.BC_NODE_IS_CORE),
         )

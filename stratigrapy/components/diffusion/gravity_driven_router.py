@@ -1,4 +1,4 @@
-"""Gravity-driven diffuser"""
+"""Gravity-driven router"""
 
 # MIT License
 
@@ -25,15 +25,17 @@
 
 import numpy as np
 
-from .._base import _BaseDiffuser
+from .._base import _BaseRouter, _BaseDiffuser
+from ..stream_power.cfuncs import calculate_sediment_influx
 
 
 ################################################################################
 # Component
 
 
-class GravityDrivenDiffuser(_BaseDiffuser):
-    """Gravity-driven diffusion of a Landlab field in continental and marine domains.
+class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
+    """Gravity-driven diffusion of a Landlab field in continental and marine domains
+    based on a routing scheme.
 
     References
     ----------
@@ -45,7 +47,7 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         https://doi.org/10.2110/pec.99.62.0197
     """
 
-    _name = "GravityDrivenDiffuser"
+    _name = "GravityDrivenRouter"
 
     def __init__(
         self,
@@ -54,8 +56,11 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         diffusivity_mar=0.001,
         wave_base=20.0,
         porosity=0.0,
-        max_erosion_rate=0.01,
-        active_layer_rate=None,
+        max_erosion_rate_sed=0.01,
+        active_layer_rate_sed=None,
+        bedrock_composition=1.0,
+        max_erosion_rate_br=0.01,
+        active_layer_rate_br=None,
         exponent_slope=1.0,
         fields_to_track=None,
     ):
@@ -77,14 +82,26 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             multiple lithologies. When computing the active layer, this porosity
             is used unless the field 'sediment__porosity' is being tracked in
             the stratigraphy.
-        max_erosion_rate : float (m/time), optional
+        max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
-            thickness of the active layer if `active_layer_rate` is None.
-        active_layer_rate : float or array-like (m/time), optional
-            The rate of formation of the active layer, which is used to determine
-            the composition of the transported sediments. By default, it is set
-            by the maximum erosion rate.
+            thickness of the active layer of the sediments if `active_layer_rate`
+            is None.
+        active_layer_rate_sed : float (m/time), optional
+            The rate of formation of the active layer for sediments, which is used
+            to determine the composition of the transported sediments. By default,
+            it is set by the maximum erosion rate of the sediments.
+        bedrock_composition : float or array-like (-)
+            The composition of the material is added to the StackedLayers from
+            the bedrock.
+        max_erosion_rate_br : float (m/time)
+            The maximum erosion rate of the bedrock. The erosion rate defines the
+            thickness of the active layer of the bedrock if `active_layer_rate`
+            is None.
+        active_layer_rate_br : float (m/time), optional
+            The rate of formation of the active layer for the bedrock, which is
+            used to determine the composition of the transported sediments. By
+            default, it is set by the maximum erosion rate of the bedrock.
         exponent_slope : float (-)
             The exponent for the slope.
         fields_to_track : str or array-like, optional
@@ -94,29 +111,25 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         self._neighbors = grid.active_adjacent_nodes_at_node
         n_neighbors = self._neighbors.shape[1]
 
-        super().__init__(
-            grid,
-            n_neighbors,
-            diffusivity_cont,
-            diffusivity_mar,
-            wave_base,
-            porosity,
-            max_erosion_rate,
-            active_layer_rate,
-            exponent_slope,
-            fields_to_track,
-        )
+        super().__init__(grid=grid,
+                               number_of_neighbors=n_neighbors,
+                                diffusivity_cont=diffusivity_cont,
+                                diffusivity_mar=diffusivity_mar,
+                                wave_base=wave_base,
+                                porosity=porosity,
+                                max_erosion_rate_sed=max_erosion_rate_sed,
+                                active_layer_rate_sed=active_layer_rate_sed,
+                                bedrock_composition=bedrock_composition,
+                                max_erosion_rate_br=max_erosion_rate_br,
+                                active_layer_rate_br=active_layer_rate_br,
+                                exponent_slope=exponent_slope,
+                                fields_to_track=fields_to_track)
 
-        # Field for the steepest slope
+        # Field for the slopes
         n_nodes = grid.number_of_nodes
         self._link_lengths = grid.length_of_link
         self._links_to_neighbors = grid.links_at_node
         self._slope = np.zeros((n_nodes, n_neighbors, 1))
-
-        # Fields for sediment fluxes
-        n_sediments = self._K_sed.shape[2]
-        self._total_sediment_outflux = np.zeros((n_nodes, 1, n_sediments))
-        self._ratio = np.zeros((n_nodes, 1, n_sediments))
 
     def _calculate_slopes(self):
         """
@@ -132,65 +145,16 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         Calculates the sediment outflux for multiple lithologies.
         """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
-
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._active_layer_composition[self._grid.core_nodes, 0] = (
-            self._stratigraphy.get_active_composition(
-                self.active_layer_rate * dt, porosity
-            )
-        )
+        self._calculate_sediment_diffusivity()
+        self._calculate_active_layer_composition(dt)
+        self._calculate_slopes()
 
         self._sediment_outflux[:] = (
             self._K_sed
-            * cell_area
+            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
             * self._active_layer_composition
-            * self._slope**self.n
+            * self._slope**self._n
         )
-
-    def _threshold_sediment_outflux(self, dt):
-        """
-        Thresholds the sediment outflux to not go beyond the amount of sediments
-        available for each lithology.
-        """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
-
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[
-            self._grid.core_nodes
-        ] * np.minimum(
-            (1.0 - self.porosity) * self.max_erosion_rate,
-            self._stratigraphy.get_class_thickness(porosity) / dt,
-        )
-        self._total_sediment_outflux[:] = np.sum(
-            self._sediment_outflux, axis=1, keepdims=True
-        )
-        self._ratio[:] = 0.0
-        np.divide(
-            self._max_sediment_outflux,
-            self._total_sediment_outflux,
-            out=self._ratio,
-            where=self._total_sediment_outflux > 0.0,
-        )
-        self._sediment_outflux[self._ratio[:, 0, 0] < 1.0] *= self._ratio[
-            self._ratio[:, 0, 0] < 1.0
-        ]
-
-    def _calculate_sediment_influx(self):
-        """
-        Calculate the influx of sediments based on the outflux and the steepest
-        slope.
-        """
-        self._sediment_influx[:] = 0.0
-        np.add.at(self._sediment_influx, self._neighbors, self._sediment_outflux)
 
     def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the diffuser for one timestep, dt.
@@ -207,11 +171,22 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             If False, create a new layer and deposit in that layer; otherwise,
             deposition occurs in the existing layer.
         """
-        self._calculate_slopes()
-        self._calculate_sediment_diffusivity()
-        self._calculate_sediment_outflux(dt)
-        self._threshold_sediment_outflux(dt)
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._calculate_sediment_influx()
+        self._calculate_sediment_outflux(dt)
+        if self._max_erosion_rate_sed != self._active_layer_rate_sed or self.max_erosion_rate_br != self._active_layer_rate_br:
+            self._calculate_active_layer(self._max_erosion_rate_sed*dt, self.max_erosion_rate_br*dt)
+        self._max_sediment_outflux[:] = cell_area*self._active_layer[:, 0]/dt
+
+        self._node_order = np.argsort(self._topography)
+        self._sediment_influx[:] = 0.
+        calculate_sediment_influx(
+            self._node_order,
+            self._neighbors,
+            self._sediment_influx,
+            self._sediment_outflux,
+            self._max_sediment_outflux,
+            dt,
+        )
 
         self._apply_fluxes(dt, update_compatible, update)

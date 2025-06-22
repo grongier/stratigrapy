@@ -42,7 +42,6 @@ cpdef void calculate_sediment_influx(
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
     const cython.floating [:, :] max_sediment_outflux,
-    const cython.floating [:, :] max_bedrock_outflux,
     const double dt,
 ) noexcept nogil:
     """Calculates sediment influx."""
@@ -65,7 +64,7 @@ cpdef void calculate_sediment_influx(
         for k in range(n_sediments):
 
             # Compute the available sediments, i.e., the maximum ouflux
-            max_outflux = sediment_influx[node, k] + max_sediment_outflux[node, k] + max_bedrock_outflux[node, k]
+            max_outflux = sediment_influx[node, k] + max_sediment_outflux[node, k]
             if max_outflux > 0.:
                 # Compute the total outflux
                 total_outflux = 0.
@@ -78,11 +77,11 @@ cpdef void calculate_sediment_influx(
                         # Update the sediment outflux
                         for j in range(n_receivers):
                             sediment_outflux[node, j, k] *= ratio
-                # Add the outflux to the influx of the downstream node(s)
-                for j in range(n_receivers):
-                    # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
-                    if flow_receivers[node, j] > -1:
-                        sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
+                    # Add the outflux to the influx of the downstream node(s)
+                    for j in range(n_receivers):
+                        # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
+                        if flow_receivers[node, j] > -1:
+                            sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
             else:
                 for j in range(n_receivers):
                     sediment_outflux[node, j, k] = 0.
@@ -150,8 +149,8 @@ cpdef void calculate_sediment_fluxes(
                         for j in range(n_receivers):
                             sediment_outflux[node, j, k] *= ratio
 
-                # Add the outflux to the influx of the downstream node(s)
-                for j in range(n_receivers):
-                    # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
-                    if flow_receivers[node, j] > -1:
-                        sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]
+                    # Add the outflux to the influx of the downstream node(s)
+                    for j in range(n_receivers):
+                        # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
+                        if flow_receivers[node, j] > -1:
+                            sediment_influx[flow_receivers[node, j], k] += sediment_outflux[node, j, k]

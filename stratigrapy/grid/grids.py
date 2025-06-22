@@ -23,6 +23,9 @@
 # SOFTWARE.
 
 
+import importlib
+import os
+from landlab.core.utils import get_functions_from_module, add_functions_to_class
 from landlab import RasterModelGrid as _RasterModelGrid
 from landlab import VoronoiDelaunayGrid as _VoronoiDelaunayGrid
 from landlab import FramedVoronoiGrid as _FramedVoronoiGrid
@@ -30,6 +33,34 @@ from landlab import HexModelGrid as _HexModelGrid
 
 from ..layers import StackedLayersMixIn
 from ..plot.layers import RasterModelGridLayerPlotterMixIn
+
+
+################################################################################
+# Adding member function (from Landlab)
+
+
+def add_module_functions_to_class(cls, module, pattern=None, exclude=None):
+    """Add functions from a module to a class as methods.
+
+    Parameters
+    ----------
+    cls : class
+        A class.
+    module : module
+        An instance of a module.
+    pattern : str, optional
+        Only get functions whose name match a regular expression.
+    exclude : str, optional
+        Only get functions whose name exclude the regular expression.
+
+    *Note* if both pattern and exclude are provided both conditions must be met.
+    """
+    (module, _) = os.path.splitext(os.path.basename(module))
+
+    mod = importlib.import_module("." + module, package="stratigrapy.grid")
+
+    funcs = get_functions_from_module(mod, pattern=pattern, exclude=exclude)
+    add_functions_to_class(cls, funcs)
 
 
 ################################################################################
@@ -134,6 +165,9 @@ class RasterModelGrid(
         )
 
 
+add_module_functions_to_class(RasterModelGrid, "raster_divergence.py", pattern="calc_*")
+
+
 ################################################################################
 # Voronoi
 
@@ -221,6 +255,9 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
             fuse_continuously,
             remove_empty_layers,
         )
+
+
+add_module_functions_to_class(VoronoiDelaunayGrid, "divergence.py", pattern="calc_*")
 
 
 class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
@@ -341,6 +378,9 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
         )
 
 
+add_module_functions_to_class(FramedVoronoiGrid, "divergence.py", pattern="calc_*")
+
+
 ################################################################################
 # Hex
 
@@ -450,3 +490,6 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
             fuse_continuously,
             remove_empty_layers,
         )
+
+
+add_module_functions_to_class(HexModelGrid, "divergence.py", pattern="calc_*")

@@ -427,6 +427,38 @@ class StackedLayers:
         of shape `(number_of_stacks, )`.
         """
         return np.sum(self.dz, axis=(0, 2))
+    
+    def _get_thickness(self, axis, porosity=None):
+        """Total sediment thickness of the columns, removing the porosity if given.
+        """
+        if porosity is None:
+            return np.sum(self.dz, axis=axis)
+        elif isinstance(porosity, str) and porosity in self._attrs:
+            return np.sum(self.dz * (1.0 - self[porosity]), axis=axis)
+        else:
+            porosity = np.asarray(porosity)
+            if porosity.ndim == self.dz.ndim:
+                return np.sum(self.dz * (1.0 - porosity), axis=axis)
+            else:
+                return np.sum(self.dz, axis=axis) * (1.0 - porosity)
+
+    def get_thickness(self, porosity=None):
+        """Total sediment thickness of the columns, removing the porosity if given.
+
+        Parameters
+        ----------
+        porosity : array_like or str
+            Porosity of all the layers for each class, which can be a layer
+            property given by its name, or the porosity for each class, which
+            is then identical for all layers.
+
+        Returns
+        -------
+        thickness
+            The sum of all layer thicknesses for each stack as an array of shape
+            `(number_of_stacks,)`.
+        """
+        return self._get_thickness((0, 2), porosity=porosity)
 
     @property
     def class_thickness(self):
@@ -438,7 +470,7 @@ class StackedLayers:
         return np.sum(self.dz, axis=0)
 
     def get_class_thickness(self, porosity=None):
-        """Total sediment thickness of the columns for each class, removing
+        """Total sediment thickness of the columns for each class, removing the
         porosity if given.
 
         Parameters
@@ -454,16 +486,7 @@ class StackedLayers:
             The sum of all layer thicknesses for each stack as an array of shape
             `(number_of_stacks, number_of_classes)`.
         """
-        if porosity is None:
-            return np.sum(self.dz, axis=0)
-        elif isinstance(porosity, str) and porosity in self._attrs:
-            return np.sum(self.dz * (1.0 - self[porosity]), axis=0)
-        else:
-            porosity = np.asarray(porosity)
-            if porosity.ndim == self.dz.ndim:
-                return np.sum(self.dz * (1.0 - porosity), axis=0)
-            else:
-                return np.sum(self.dz, axis=0) * (1.0 - porosity)
+        return self._get_thickness(0, porosity=porosity)
 
     @property
     def layer_thickness(self):

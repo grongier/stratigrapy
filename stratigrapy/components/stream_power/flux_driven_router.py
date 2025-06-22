@@ -1,4 +1,4 @@
-"""Water-driven displacer"""
+"""Flux-driven router"""
 
 # MIT License
 
@@ -25,7 +25,7 @@
 
 import numpy as np
 
-from .._base import _BaseStreamPower
+from .._base import _BaseRouter, _BaseStreamPower
 from ...utils import convert_to_array
 from .cfuncs import calculate_sediment_fluxes
 
@@ -34,21 +34,88 @@ from .cfuncs import calculate_sediment_fluxes
 # Component
 
 
-class WaterDrivenDisplacer(_BaseStreamPower):
-    """xi-q model for erosion and transport of a Landlab field in continental
+class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
+    """SPACE model for erosion and transport of a Landlab field in continental
     and marine domains.
+
+    Note that this is a simple implementation that doesn't include all the
+    elements to improve stability of the original Landlab component.
 
     References
     ----------
-    Davy, P., & Lague, D. (2009)
-        Fluvial erosion/transport equation of landscape evolution models revisited
-        https://doi.org/10.1029/2008JF001146
     Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
         The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
         https://doi.org/10.5194/gmd-10-4577-2017
     """
 
-    _name = "WaterDrivenDisplacer"
+    _name = "FluxDrivenRouter"
+
+    _info = {
+        "flow__upstream_node_order": {
+            "dtype": int,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "Node array containing downstream-to-upstream ordered list of node IDs",
+        },
+        "flow__receiver_node": {
+            "dtype": int,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "Node array of receivers (node that receives flow from current node)",
+        },
+        "flow__receiver_proportions": {
+            "dtype": float,
+            "intent": "in",
+            "optional": True,
+            "units": "-",
+            "mapping": "node",
+            "doc": "Node array of proportion of flow sent to each receiver.",
+        },
+        "sediment__unit_flux_in": {
+            "dtype": float,
+            "intent": "in",
+            "optional": True,
+            "units": "m3/s",
+            "mapping": "node",
+            "doc": "Sediment flux as boundary condition",
+        },
+        "surface_water__discharge": {
+            "dtype": float,
+            "intent": "in",
+            "optional": False,
+            "units": "m3/s",
+            "mapping": "node",
+            "doc": "Volumetric discharge of surface water",
+        },
+        "topographic__elevation": {
+            "dtype": float,
+            "intent": "inout",
+            "optional": False,
+            "units": "m",
+            "mapping": "node",
+            "doc": "Land surface topographic elevation",
+        },
+        "topographic__steepest_slope": {
+            "dtype": float,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "The steepest *downhill* slope",
+        },
+        "bathymetric__depth": {
+            "dtype": float,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "The water depth under the sea",
+        },
+    }
 
     def __init__(
         self,
@@ -58,13 +125,15 @@ class WaterDrivenDisplacer(_BaseStreamPower):
         wave_base=20.0,
         settling_velocity=1.0,
         critical_flux_sed=0.0,
+        critical_thickness=0.1,
         porosity=0.0,
         max_erosion_rate_sed=1e-2,
-        active_layer_rate=None,
+        active_layer_rate_sed=None,
         erodibility_br_cont=1e-10,
         erodibility_br_mar=1e-10,
         bedrock_composition=1.0,
         critical_flux_br=0.0,
+        active_layer_rate_br=None,
         exponent_discharge=0.5,
         exponent_slope=1.0,
         ref_water_flux=None,
@@ -88,6 +157,8 @@ class WaterDrivenDisplacer(_BaseStreamPower):
         critical_flux_sed : float or array-like (m3/time)
             Critical sediment flux to start displace sediments in the stream
             power law.
+        critical_thickness : float (m)
+            Sediment thickness required for full entrainment.
         porosity : float or array-like (-)
             The porosity of the sediments at the time of deposition for one or
             multiple lithologies. When computing the active layer, this porosity
@@ -123,35 +194,46 @@ class WaterDrivenDisplacer(_BaseStreamPower):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
+        self._flow_receivers = grid.at_node["flow__receiver_node"][..., np.newaxis]
+        n_receivers = self._flow_receivers.shape[1]
+
         super().__init__(
-            grid,
-            erodibility_sed_cont,
-            erodibility_sed_mar,
-            wave_base,
-            critical_flux_sed,
-            porosity,
-            max_erosion_rate_sed,
-            active_layer_rate,
-            bedrock_composition,
-            exponent_discharge,
-            exponent_slope,
-            ref_water_flux,
-            fields_to_track,
+            grid=grid,
+            number_of_neighbors=n_receivers,
+            diffusivity_cont=erodibility_sed_cont,
+            diffusivity_mar=erodibility_sed_mar,
+            wave_base=wave_base,
+            critical_flux=critical_flux_sed,
+            porosity=porosity,
+            max_erosion_rate_sed=max_erosion_rate_sed,
+            active_layer_rate_sed=active_layer_rate_sed,
+            bedrock_composition=bedrock_composition,
+            max_erosion_rate_br=0.,
+            active_layer_rate_br=active_layer_rate_br,
+            exponent_discharge=exponent_discharge,
+            exponent_slope=exponent_slope,
+            ref_water_flux=ref_water_flux,
+            fields_to_track=fields_to_track,
         )
 
         # Parameters
-        self.settling_velocity = convert_to_array(settling_velocity)
-        self.K_br_cont = convert_to_array(erodibility_br_cont)
-        self.K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
-        self.critical_flux_br = convert_to_array(critical_flux_br)
-        n_nodes = grid.number_of_nodes
-        n_sediments = self._K_sed.shape[2]
-        self._K_br = np.zeros((n_nodes, 1, n_sediments))
+        self._settling_velocity = convert_to_array(settling_velocity)
+        self.critical_thickness = critical_thickness
+        self._K_br_cont = convert_to_array(erodibility_br_cont)
+        self._K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
+        self._critical_flux_br = convert_to_array(critical_flux_br)
+
+        # Fields for stream power
+        self._node_order = grid.at_node["flow__upstream_node_order"]
 
         # Fields for sediment fluxes
+        n_nodes = grid.number_of_nodes
         n_receivers = self._flow_receivers.shape[1]
+        n_sediments = self._stratigraphy.number_of_classes
+        self._K_br = np.zeros((n_nodes, 1, n_sediments))
         self._erosion_flux_sed = np.zeros((n_nodes, n_receivers, n_sediments))
         self._erosion_flux_br = np.zeros((n_nodes, n_receivers, n_sediments))
+        self._ratio_excess_thickness = np.zeros((n_nodes, 1, 1))
         self._ratio_critical_outflux_br = np.zeros((n_nodes, n_receivers, n_sediments))
 
     def _calculate_bedrock_diffusivity(self):
@@ -159,8 +241,8 @@ class WaterDrivenDisplacer(_BaseStreamPower):
         Calculates the diffusivity coefficient of the bedrock over the continental
         and marine domains.
         """
-        self._K_br[self._bathymetry[:, 0] == 0.0] = self.K_br_cont
-        self._K_br[self._bathymetry[:, 0] > 0.0, 0] = self.K_br_mar * np.exp(
+        self._K_br[self._bathymetry[:, 0] == 0.0] = self._K_br_cont
+        self._K_br[self._bathymetry[:, 0] > 0.0, 0] = self._K_br_mar * np.exp(
             -self._bathymetry[self._bathymetry[:, 0] > 0.0] / self.wave_base
         )
         self._K_br[self._grid.core_nodes][self._stratigraphy.thickness > 0.0] = 0.0
@@ -169,58 +251,51 @@ class WaterDrivenDisplacer(_BaseStreamPower):
         """
         Calculates the erosion flux of sediments for multiple lithologies.
         """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
-
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._active_layer_composition[self._grid.core_nodes, 0] = (
-            self._stratigraphy.get_active_composition(
-                self.active_layer_rate * dt, porosity
-            )
-        )
+        self._calculate_sediment_diffusivity()
+        self._calculate_active_layer_composition(dt)
 
         self._erosion_flux_sed[:] = (
             self._K_sed
-            * cell_area
+            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
             * self._active_layer_composition
-            * (self._water_flux * self._flow_proportions) ** self.m
-            * self._slope**self.n
+            * (self._water_flux * self._flow_proportions) ** self._m
+            * self._slope**self._n
         )
         np.divide(
             self._erosion_flux_sed,
-            self.critical_flux,
+            self._critical_flux,
             out=self._ratio_critical_outflux,
-            where=self.critical_flux != 0,
+            where=self._critical_flux != 0,
         )
-        self._erosion_flux_sed[:] -= self.critical_flux * (
+        self._erosion_flux_sed[:] -= self._critical_flux * (
             1.0 - np.exp(-self._ratio_critical_outflux)
         )
+        self._ratio_excess_thickness[self._grid.core_nodes, 0, 0] = np.exp(-self._stratigraphy.thickness/self.critical_thickness)
+        self._erosion_flux_sed[:] *= 1.0 - self._ratio_excess_thickness
 
     def _calculate_bedrock_flux(self):
         """
         Calculates the erosion flux of the bedrock for multiple lithologies.
         """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+        self._calculate_bedrock_diffusivity()
 
         self._erosion_flux_br[:] = (
             self._K_br
-            * cell_area
-            * self.bedrock_composition
-            * (self._water_flux * self._flow_proportions) ** self.m
-            * self._slope**self.n
+            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+            * self._bedrock_composition
+            * (self._water_flux * self._flow_proportions) ** self._m
+            * self._slope**self._n
         )
         np.divide(
             self._erosion_flux_br,
-            self.critical_flux_br,
+            self._critical_flux_br,
             out=self._ratio_critical_outflux_br,
-            where=self.critical_flux_br != 0,
+            where=self._critical_flux_br != 0,
         )
-        self._erosion_flux_br[:] -= self.critical_flux_br * (
+        self._erosion_flux_br[:] -= self._critical_flux_br * (
             1.0 - np.exp(-self._ratio_critical_outflux_br)
         )
+        self._erosion_flux_br[:] *= self._ratio_excess_thickness
 
     def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the displacer for one timestep, dt.
@@ -237,25 +312,15 @@ class WaterDrivenDisplacer(_BaseStreamPower):
             If False, create a new layer and deposit in that layer; otherwise,
             deposition occurs in the existing layer.
         """
-        core_nodes = self._grid.core_nodes
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
         self._normalize_water_flux()
 
-        self._calculate_sediment_diffusivity()
-        self._calculate_bedrock_diffusivity()
         self._calculate_sediment_flux(dt)
+        if self._max_erosion_rate_sed != self._active_layer_rate_sed:
+            self._calculate_active_layer(self._max_erosion_rate_sed*dt, 0.)
+        self._max_sediment_outflux[:] = cell_area*self._active_layer[:, 0]/dt
         self._calculate_bedrock_flux()
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._max_sediment_outflux[core_nodes] = cell_area[core_nodes] * np.minimum(
-            (1.0 - self.porosity) * self.max_erosion_rate,
-            self._stratigraphy.get_class_thickness(porosity) / dt,
-        )
-        # self._max_bedrock_outflux[core_nodes] = (1. - self.porosity)*cell_area[core_nodes]*self.max_erosion_rate_br
 
         self._sediment_influx[:] = self._sediment_input
         self._sediment_outflux[:] = 0.0
@@ -267,7 +332,7 @@ class WaterDrivenDisplacer(_BaseStreamPower):
             self._flow_proportions[..., 0],
             self._sediment_influx,
             self._sediment_outflux,
-            self.settling_velocity,
+            self._settling_velocity,
             self._erosion_flux_sed,
             self._erosion_flux_br,
             self._max_sediment_outflux,

@@ -30,6 +30,7 @@ dependencies = [
 
 [tool.setuptools]
 ext-modules = [
+    {name = "stratigrapy.grid.cfuncs", sources = ["stratigrapy/grid/cfuncs.pyx"]},
     {name = "stratigrapy.layers.cfuncs", sources = ["stratigrapy/layers/cfuncs.pyx"]},
     {name = "stratigrapy.plot.cfuncs", sources = ["stratigrapy/plot/cfuncs.pyx"]},
     {name = "stratigrapy.components.stream_power.cfuncs", sources = ["stratigrapy/components/stream_power/cfuncs.pyx"]},

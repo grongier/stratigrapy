@@ -26,7 +26,7 @@
 import numpy as np
 from landlab import RasterModelGrid
 
-from .._base import _BaseDisplacer
+from .._base import _BaseRouter
 from ...utils import convert_to_array
 from .cfuncs import calculate_sediment_influx
 
@@ -35,7 +35,7 @@ from .cfuncs import calculate_sediment_influx
 # Component
 
 
-class SimpleSedimentLandslider(_BaseDisplacer):
+class SimpleSedimentLandslider(_BaseRouter):
     """Simple slope failure and mass flows of sediments in a StackedLayers.
 
     References
@@ -130,18 +130,18 @@ class SimpleSedimentLandslider(_BaseDisplacer):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        self.repose_angle_cont = convert_to_array(repose_angle_cont)
-        n_sediments = len(self.repose_angle_cont)
-
-        super().__init__(
-            grid, 1, porosity, max_erosion_rate, active_layer_rate, fields_to_track
-        )
+        super().__init__(grid, 1, porosity, fields_to_track)
 
         # Parameters
-        self.repose_angle_mar = convert_to_array(repose_angle_mar)
+        self._repose_angle_cont = convert_to_array(repose_angle_cont)
+        self._repose_angle_mar = convert_to_array(repose_angle_mar)
+        self._max_erosion_rate = np.inf if max_erosion_rate is None else max_erosion_rate
+        self._active_layer_rate = (
+            self._max_erosion_rate if active_layer_rate is None else active_layer_rate
+        )
 
         # Physical fields
-        self._bathymetry = self._bathymetry[:, 0]
+        self._bathymetry = grid.at_node["bathymetric__depth"]
 
         # Field for the steepest slope
         n_nodes = grid.number_of_nodes
@@ -162,9 +162,13 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         self._steepest_link = np.zeros((n_nodes, 1), dtype=int)
 
         # Fields for sediment fluxes
+        n_sediments = self._stratigraphy.number_of_classes
         self._repose_angle = np.zeros((n_nodes, n_sediments))
         self._repose_slope = np.zeros((n_nodes, 1))
         self._slope_difference = np.zeros((n_nodes, 1))
+        self._max_sediment_outflux = self._max_sediment_outflux[:, np.newaxis]
+        self._active_layer = np.zeros((n_nodes, n_sediments))
+        self._active_layer_thickness = np.zeros((n_nodes, 1))
         self._active_layer_composition = np.zeros((n_nodes, n_sediments))
 
     def _calculate_sediment_repose_angle(self):
@@ -172,25 +176,46 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         Calculates the repose angle of the sediments over the continental and
         marine domains.
         """
-        self._repose_angle[self._bathymetry == 0.0] = self.repose_angle_cont
-        self._repose_angle[self._bathymetry > 0.0] = self.repose_angle_mar
+        self._repose_angle[self._bathymetry == 0.0] = self._repose_angle_cont
+        self._repose_angle[self._bathymetry > 0.0] = self._repose_angle_mar
+
+    def _calculate_active_layer(self, max_thickness_sed):
+        """
+        Calculates the active layer based on the sediments.
+        """
+        porosity = (
+            "sediment__porosity"
+            if "sediment__porosity" in self._stratigraphy._attrs
+            else self._porosity
+        )
+        self._active_layer[self._grid.core_nodes] = (
+            self._stratigraphy.get_active_layer(max_thickness_sed, porosity)
+        )
+
+    def _calculate_active_layer_composition(self, dt):
+        """
+        Calculates the composition of the active layer based on the sediments
+        and the bedrock.
+        """
+        self._calculate_active_layer(self._active_layer_rate*dt)
+
+        self._active_layer_thickness[:] = np.sum(
+            self._active_layer, axis=1, keepdims=True
+        )
+        self._active_layer_composition[:] = 0.0
+        np.divide(
+            self._active_layer,
+            self._active_layer_thickness,
+            out=self._active_layer_composition,
+            where=self._active_layer_thickness > 0.0,
+        )
 
     def _calculate_sediment_outflux(self, dt):
         """
         Calculates the sediment outflux for multiple lithologies.
         """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
-
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._active_layer_composition[self._grid.core_nodes] = (
-            self._stratigraphy.get_active_composition(
-                self.active_layer_rate * dt, porosity
-            )
-        )
+        self._calculate_sediment_repose_angle()
+        self._calculate_active_layer_composition(dt)
 
         self._steepest_receivers[:] = np.argmax(self._slope, axis=1, keepdims=True)
         self._steepest_slope[:] = np.take_along_axis(
@@ -210,11 +235,12 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         )
         self._slope_difference[:] = self._steepest_slope - self._repose_slope
         self._slope_difference[self._slope_difference < 0.0] = 0.0
+
         self._sediment_outflux[:, 0] = (
             self._active_layer_composition
             * self._slope_difference
             * self._link_lengths[self._steepest_link]
-            * cell_area
+            * self._grid.cell_area_at_node[:, np.newaxis]
             / dt
         )
 
@@ -225,17 +251,10 @@ class SimpleSedimentLandslider(_BaseDisplacer):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        porosity = (
-            "sediment__porosity"
-            if "sediment__porosity" in self._stratigraphy._attrs
-            else self.porosity
-        )
-        self._max_sediment_outflux[self._grid.core_nodes, 0] = cell_area[
-            self._grid.core_nodes
-        ] * np.minimum(
-            (1.0 - self.porosity) * self.max_erosion_rate,
-            self._stratigraphy.get_class_thickness(porosity) / dt,
-        )
+        if self._max_erosion_rate != self._active_layer_rate:
+            self._calculate_active_layer(self._max_erosion_rate*dt, 0.)
+        self._max_sediment_outflux[:, 0] = cell_area*self._active_layer/dt
+
         self._sediment_outflux[self._sediment_outflux > self._max_sediment_outflux] = (
             self._max_sediment_outflux[
                 self._sediment_outflux > self._max_sediment_outflux
@@ -257,12 +276,12 @@ class SimpleSedimentLandslider(_BaseDisplacer):
             If False, create a new layer and deposit in that layer; otherwise,
             deposition occurs in the existing layer.
         """
-        self._calculate_sediment_repose_angle()
+        
         self._calculate_sediment_outflux(dt)
         self._threshold_sediment_outflux(dt)
 
-        self._sediment_influx[:] = 0.0
         self._node_order[:] = np.argsort(self._topography)
+        self._sediment_influx[:] = 0.0
         calculate_sediment_influx(
             self._node_order,
             np.take_along_axis(self._flow_receivers, self._steepest_receivers, axis=1)[
