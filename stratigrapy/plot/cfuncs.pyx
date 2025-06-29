@@ -30,6 +30,7 @@ from libc.math cimport NAN
 ################################################################################
 # Functions
 
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef void mask_layer(

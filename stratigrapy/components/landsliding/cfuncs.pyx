@@ -35,6 +35,7 @@ ctypedef fused id_t:
 ################################################################################
 # Functions
 
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef void calculate_sediment_influx(

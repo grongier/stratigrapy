@@ -24,6 +24,7 @@
 
 
 cimport cython
+from libc.stdint cimport int8_t
 
 # https://cython.readthedocs.io/en/stable/src/userguide/fusedtypes.html
 ctypedef fused id_t:
@@ -34,6 +35,59 @@ ctypedef fused id_t:
 ################################################################################
 # Functions
 
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef void calculate_flux_limiter(
+    const id_t [:] node_order,
+    const id_t [:, :] neighbors,
+    const id_t [:, :] links_to_neighbors,
+    const int8_t [:, :] link_dirs_at_node,
+    const cython.floating [:] topography,
+    const cython.floating [:, :] sediment_flux_at_links,
+    const cython.floating [:, :] max_sediment_flux,
+    const cython.floating [:, :] sediment_input,
+    cython.floating [:] flux_limiter,
+): # noexcept nogil:
+    """Calculates the flux limiter."""
+    cdef unsigned int n_nodes = node_order.shape[0]
+    cdef unsigned int n_neighbors = neighbors.shape[1]
+    cdef unsigned int n_sediments = sediment_input.shape[1]
+    cdef unsigned int node, i, j, k
+    cdef int neighbor, link
+    cdef double total_outflux, max_outflux
+
+    # Iterate top to bottom through the nodes, update sediment out- and influx.
+    # Because calculation of the outflux requires the influx, this operation
+    # must be done in an upstream to downstream loop, and cannot be vectorized.
+    for i in range(n_nodes - 1, -1, -1):
+
+        # Choose the node id
+        node = node_order[i]
+
+        # Compute the available sediments, i.e., the maximum ouflux, and the
+        # total outflux.
+        max_outflux = 0.
+        total_outflux = 0.
+        for j in range(n_neighbors):
+            link = links_to_neighbors[node, j]
+            neighbor = neighbors[node, j]
+            if topography[node] >= topography[neighbor]:
+                for k in range(n_sediments):
+                    total_outflux -= sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
+            else:
+                for k in range(n_sediments):
+                    max_outflux += flux_limiter[neighbor]*sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
+        for k in range(n_sediments):
+            max_outflux += max_sediment_flux[node, k] + sediment_input[node, k]
+
+        # Compute the flux limiter
+        if total_outflux > 0. and max_outflux/total_outflux < 1.:
+            flux_limiter[node] = max_outflux/total_outflux
+        else:
+            flux_limiter[node] = 1.
+
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef void calculate_sediment_influx(
@@ -42,7 +96,6 @@ cpdef void calculate_sediment_influx(
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
     const cython.floating [:, :] max_sediment_outflux,
-    const double dt,
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
@@ -50,7 +103,7 @@ cpdef void calculate_sediment_influx(
     cdef unsigned int n_sediments = sediment_outflux.shape[2]
     cdef unsigned int node, i, j, k
     cdef double total_outflux, max_outflux
-    cdef double ratio
+    cdef double limiter
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
     # Because calculation of the outflux requires the influx, this operation
@@ -72,11 +125,11 @@ cpdef void calculate_sediment_influx(
                     total_outflux += sediment_outflux[node, j, k]
                 if total_outflux > 0.:
                     # Determine by how much the sediment outflux needs to be decreased
-                    ratio = max_outflux/total_outflux
-                    if ratio < 1.:
+                    limiter = max_outflux/total_outflux
+                    if limiter < 1.:
                         # Update the sediment outflux
                         for j in range(n_receivers):
-                            sediment_outflux[node, j, k] *= ratio
+                            sediment_outflux[node, j, k] *= limiter
                     # Add the outflux to the influx of the downstream node(s)
                     for j in range(n_receivers):
                         # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
@@ -101,7 +154,6 @@ cpdef void calculate_sediment_fluxes(
     const cython.floating [:, :, :] erosion_flux_sed,
     const cython.floating [:, :, :] erosion_flux_br,
     const cython.floating [:, :] max_sediment_outflux,
-    const double dt,
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
@@ -109,7 +161,7 @@ cpdef void calculate_sediment_fluxes(
     cdef unsigned int n_sediments = sediment_outflux.shape[2]
     cdef unsigned int node, i, j, k
     cdef double total_outflux, max_outflux
-    cdef double ratio
+    cdef double limiter
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
     # Because calculation of the outflux requires the influx, this operation
@@ -143,11 +195,11 @@ cpdef void calculate_sediment_fluxes(
                     total_outflux += sediment_outflux[node, j, k]
                 if total_outflux > 0.:
                     # Determine by how much the sediment outflux needs to be decreased
-                    ratio = max_outflux/total_outflux
-                    if ratio < 1.:
+                    limiter = max_outflux/total_outflux
+                    if limiter < 1.:
                         # Update the sediment outflux
                         for j in range(n_receivers):
-                            sediment_outflux[node, j, k] *= ratio
+                            sediment_outflux[node, j, k] *= limiter
 
                     # Add the outflux to the influx of the downstream node(s)
                     for j in range(n_receivers):

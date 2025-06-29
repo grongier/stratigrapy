@@ -36,6 +36,7 @@ ctypedef fused float_or_int:
 ################################################################################
 # Functions
 
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def _calc_mult_flux_div_at_node(

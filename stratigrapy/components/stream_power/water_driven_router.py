@@ -34,16 +34,16 @@ from .cfuncs import calculate_sediment_influx
 
 
 class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
-    """Water-driven diffusion of a Landlab field in continental and marine domains.
+    """Water-driven diffusion of a Landlab field in continental and marine domains
+    based on a routing scheme.
+
+    The flux limiter is applied to each lithology separately.
 
     References
     ----------
     Granjeon, D. (1996)
         Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
         https://theses.hal.science/tel-00648827
-    Granjeon, D., & Joseph, P. (1999)
-        Concepts and applications of a 3-D multiple lithology, diffusive model in stratigraphic modeling
-        https://doi.org/10.2110/pec.99.62.0197
     Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
         The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
         https://doi.org/10.5194/gmd-10-4577-2017
@@ -211,9 +211,6 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             fields_to_track=fields_to_track,
         )
 
-        # Fields for stream power
-        self._node_order = grid.at_node["flow__upstream_node_order"]
-
     def _calculate_sediment_outflux(self, dt):
         """
         Calculates the sediment outflux for multiple lithologies.
@@ -274,7 +271,6 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             self._sediment_influx,
             self._sediment_outflux,
             self._max_sediment_outflux,
-            dt,
         )
 
         self._apply_fluxes(dt, update_compatible, update)

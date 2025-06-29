@@ -1,4 +1,4 @@
-"""Gravity-driven router"""
+"""Gravity-driven diffuser"""
 
 # MIT License
 
@@ -26,55 +26,35 @@
 import numpy as np
 
 from stratigrapy.utils import convert_to_array
-from .._base import _BaseRouter, _BaseDiffuser
-from .cfuncs import calculate_sediment_fluxes
+from .._base import _BaseDiffuser
+from ..stream_power.cfuncs import calculate_flux_limiter
 
 
 ################################################################################
 # Component
 
 
-class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
+class GravityDrivenDiffuser(_BaseDiffuser):
     """Gravity-driven diffusion of a Landlab field in continental and marine domains
-    based on a routing scheme. The diffusion can be linear (the default) or
+    based on a finite-volume scheme. The diffusion can be linear (the default) or
     non-linear (when the critical-anlge parameters are defined) following Roering
     et al. (1999).
 
-    Contrary to Gervais (2004), the flux limiter is applied to each lithology
-    separately.
-
-    TODO: Add separate bedrock diffusivities and fluxes like WaterDrivenRouter?
+    Contrary to Gervais (2004), the elevation is solved explicitely in time and
+    the active layer composition follows a fully discrete scheme. The flux limiter
+    follows Gervais' recursive explicit scheme.
 
     References
     ----------
-    Carretier, S., Martinod, P., Reich, M., & Godderis, Y. (2016)
-        Modelling sediment clasts transport during landscape evolution
-        https://doi.org/10.5194/esurf-4-237-2016
     Gervais, V. (2004)
         Étude et Simulation d'un Modèle Stratigraphique Multi-Lithologique sous Contrainte de Taux d'Érosion Maximal
         https://theses.hal.science/tel-01445562/
+    Roering, J. J., Kirchner, J. W., & Dietrich, W. E. (1999)
+        Evidence for nonlinear, diffusive sediment transport on hillslopes and implications for landscape morphology
+        https://doi.org/10.1029/1998WR900090
     """
 
-    _name = "GravityDrivenRouter"
-
-    _info = {
-        "topographic__elevation": {
-            "dtype": float,
-            "intent": "inout",
-            "optional": False,
-            "units": "m",
-            "mapping": "node",
-            "doc": "Land surface topographic elevation",
-        },
-        "bathymetric__depth": {
-            "dtype": float,
-            "intent": "in",
-            "optional": False,
-            "units": "-",
-            "mapping": "node",
-            "doc": "The water depth under the sea",
-        },
-    }
+    _name = "GravityDrivenDiffuser"
 
     def __init__(
         self,
@@ -143,23 +123,19 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        self._neighbors = grid.active_adjacent_nodes_at_node
-        n_neighbors = self._neighbors.shape[1]
-
         super().__init__(
-            grid=grid,
-            number_of_neighbors=n_neighbors,
-            diffusivity_cont=diffusivity_cont,
-            diffusivity_mar=diffusivity_mar,
-            wave_base=wave_base,
-            porosity=porosity,
-            max_erosion_rate_sed=max_erosion_rate_sed,
-            active_layer_rate_sed=active_layer_rate_sed,
-            bedrock_composition=bedrock_composition,
-            max_erosion_rate_br=max_erosion_rate_br,
-            active_layer_rate_br=active_layer_rate_br,
-            exponent_slope=exponent_slope,
-            fields_to_track=fields_to_track,
+            grid,
+            diffusivity_cont,
+            diffusivity_mar,
+            wave_base,
+            porosity,
+            max_erosion_rate_sed,
+            active_layer_rate_sed,
+            bedrock_composition,
+            max_erosion_rate_br,
+            active_layer_rate_br,
+            exponent_slope,
+            fields_to_track,
         )
 
         # Parameters
@@ -182,77 +158,126 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
             else:
                 self._critical_slope_mar = np.tan(np.deg2rad(self._critical_slope_mar))
 
-        # Field for the slopes
-        n_nodes = grid.number_of_nodes
-        self._link_lengths = grid.length_of_link
-        self._links_to_neighbors = grid.links_at_node
-        self._slope = np.zeros((n_nodes, n_neighbors, 1))
+        # Physical fields
+        n_links = grid.number_of_links
+        self._bathymetry_at_links = np.zeros(n_links)
 
         # Fields for sediment fluxes
+        n_nodes = grid.number_of_nodes
         n_sediments = self._stratigraphy.number_of_classes
         self._node_order = np.zeros(n_nodes, dtype=int)
-        self._erosion_flux_sed = np.zeros((n_nodes, n_neighbors, n_sediments))
+        self._K_sed_at_links = np.zeros((n_links, n_sediments))
+        self._slope_at_links = np.zeros((n_links, 1))
         if (
             self._critical_slope_cont is not None
             and self._critical_slope_mar is not None
         ):
-            self._thres_slope = np.zeros((n_nodes, n_neighbors, n_sediments))
-            self._critical_slope = np.zeros((n_nodes, 1, n_sediments))
-        self._transferred_fraction = np.zeros((n_nodes, n_neighbors, n_sediments))
-        self._flux_proportions = np.zeros((n_nodes, n_neighbors))
-        self._sum_slopes = np.zeros((n_nodes, n_neighbors))
+            self._thres_slope_at_links = np.zeros((n_links, n_sediments))
+            self._critical_slope_at_links = np.zeros((n_links, n_sediments))
+        self._active_layer_composition_at_links = np.zeros((n_links, n_sediments))
+        self._sediment_flux_at_links = np.zeros((n_links, n_sediments))
+        self._sediment_flux = np.zeros((n_nodes, n_sediments))
+        self._max_sediment_flux = np.zeros((n_nodes, n_sediments))
+        self._sediment_input = np.zeros((n_nodes, n_sediments))
+        self._flux_limiter = np.zeros(n_nodes)
+        self._flux_limiter_at_links = np.zeros(n_links)
 
-    def _calculate_slopes(self):
+    def _adjust_sediment_diffusivity(self):
         """
-        Calculates the slope between each node and its neighbors.
+        Ajusts the sediment diffusivity based on the slope over the continental
+        and marine domains.
         """
-        self._slope[..., 0] = (
-            self._topography[:, np.newaxis] - self._topography[self._neighbors]
-        ) / self._link_lengths[self._links_to_neighbors]
-        self._slope[self._neighbors == -1] = 0.0
-        self._slope[self._slope < 0.0] = 0.0
+        self._grid.map_mean_of_link_nodes_to_link(
+            self._bathymetry[:, 0], out=self._bathymetry_at_links
+        )
+
+        self._critical_slope_at_links[self._bathymetry_at_links == 0.0] = (
+            self._critical_slope_cont
+        )
+        self._critical_slope_at_links[self._bathymetry_at_links > 0.0] = (
+            self._critical_slope_mar
+        )
+
+        self._thres_slope_at_links[:] = np.where(
+            np.abs(self._slope_at_links) >= self._critical_slope_at_links,
+            self._critical_slope_at_links - 1e-12,
+            self._slope_at_links,
+        )
+
+        self._K_sed_at_links /= (
+            1.0 - (self._thres_slope_at_links / self._critical_slope_at_links) ** 2
+        )
 
     def _calculate_sediment_flux(self, dt):
         """
-        Calculates the erosion flux of sediments for multiple lithologies.
+        Calculates the sediment fluxes for multiple lithologies.
         """
-        self._calculate_sediment_diffusivity()
+        self._slope_at_links[self._grid.active_links, 0] = self._grid.calc_grad_at_link(
+            self._topography
+        )[self._grid.active_links]
         self._calculate_active_layer_composition(dt)
-        self._calculate_slopes()
+        self._calculate_sediment_diffusivity()
 
-        self._erosion_flux_sed[:] = (
-            self._K_sed
-            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
-            * self._active_layer_composition
-            * self._slope**self._n
+        self._grid.map_mean_of_link_nodes_to_link(
+            self._K_sed[:, 0], out=self._K_sed_at_links
+        )
+        self._grid.map_value_at_max_node_to_link(
+            self._topography[:, np.newaxis],
+            self._active_layer_composition[:, 0],
+            out=self._active_layer_composition_at_links,
         )
 
-    def _calculate_transferred_fraction(self):
-        """
-        Calculates the fraction of deposited sediments for multiple lithologies.
-        """
-        self._critical_slope[self._bathymetry == 0.0] = self._critical_slope_cont
-        self._critical_slope[self._bathymetry > 0.0] = self._critical_slope_mar
+        if (
+            self._critical_slope_cont is not None
+            and self._critical_slope_mar is not None
+        ):
+            self._adjust_sediment_diffusivity()
 
-        self._thres_slope[:] = np.where(
-            self._slope >= self._critical_slope,
-            self._critical_slope - 1e-12,
-            self._slope,
+        self._sediment_flux_at_links[:] = (
+            -self._K_sed_at_links
+            * np.sign(self._slope_at_links)
+            * self._active_layer_composition_at_links
+            * np.abs(self._slope_at_links) ** self._n
         )
 
-        self._transferred_fraction[:] = (self._thres_slope / self._critical_slope) ** 2
+        self._grid.calc_mult_flux_div_at_node(
+            self._sediment_flux_at_links, out=self._sediment_flux
+        )
 
-    def _calculate_flux_proportions(self):
+    def _threshold_sediment_flux(self, dt):
         """
-        Calculates the flux proportions based on the slopes around a node.
+        Thresholds the sediment fluxes to not exceed a maximum erosion rate.
         """
-        self._sum_slopes[:] = np.sum(self._slope[..., 0], axis=1, keepdims=True)
-        self._flux_proportions[:] = 0.0
-        np.divide(
-            self._slope[..., 0],
-            self._sum_slopes,
-            out=self._flux_proportions,
-            where=self._sum_slopes > 0.0,
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
+
+        if (
+            self._max_erosion_rate_sed != self._active_layer_rate_sed
+            or self.max_erosion_rate_br != self._active_layer_rate_br
+        ):
+            self._calculate_active_layer(
+                self._max_erosion_rate_sed * dt, self.max_erosion_rate_br * dt
+            )
+        self._max_sediment_flux[:] = cell_area * self._active_layer[:, 0] / dt
+
+        self._node_order[:] = np.argsort(self._topography)
+        calculate_flux_limiter(
+            self._node_order,
+            self._grid.active_adjacent_nodes_at_node,
+            self._grid.links_at_node,
+            self._grid.link_dirs_at_node,
+            self._topography,
+            self._sediment_flux_at_links * self._grid.length_of_link[:, np.newaxis],
+            self._max_sediment_flux,
+            self._sediment_input,
+            self._flux_limiter,
+        )
+        self._grid.map_value_at_max_node_to_link(
+            self._topography, self._flux_limiter, out=self._flux_limiter_at_links
+        )
+
+        self._sediment_flux_at_links *= self._flux_limiter_at_links[:, np.newaxis]
+        self._grid.calc_mult_flux_div_at_node(
+            self._sediment_flux_at_links, out=self._sediment_flux
         )
 
     def run_one_step(self, dt, update_compatible=False, update=False):
@@ -270,37 +295,13 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
             If False, create a new layer and deposit in that layer; otherwise,
             deposition occurs in the existing layer.
         """
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
+        core_nodes = self._grid.core_nodes
 
         self._calculate_sediment_flux(dt)
-        if (
-            self._max_erosion_rate_sed != self._active_layer_rate_sed
-            or self.max_erosion_rate_br != self._active_layer_rate_br
-        ):
-            self._calculate_active_layer(
-                self._max_erosion_rate_sed * dt, self.max_erosion_rate_br * dt
-            )
-        self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
+        self._threshold_sediment_flux(dt)
 
-        if (
-            self._critical_slope_cont is not None
-            and self._critical_slope_mar is not None
-        ):
-            self._calculate_transferred_fraction()
-            self._calculate_flux_proportions()
-
-        self._node_order[:] = np.argsort(self._topography)
-        self._sediment_influx[:] = 0.0
-        self._sediment_outflux[:] = 0.0
-        calculate_sediment_fluxes(
-            self._node_order,
-            self._neighbors,
-            self._flux_proportions,
-            self._sediment_influx,
-            self._sediment_outflux,
-            self._transferred_fraction,
-            self._erosion_flux_sed,
-            self._max_sediment_outflux,
+        self._sediment_thickness[core_nodes] = (
+            -self._sediment_flux[core_nodes] * dt / (1.0 - self._porosity)
         )
 
-        self._apply_fluxes(dt, update_compatible, update)
+        self._update_physical_fields(dt, update_compatible, update)

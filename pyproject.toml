@@ -33,6 +33,7 @@ ext-modules = [
     {name = "stratigrapy.grid.cfuncs", sources = ["stratigrapy/grid/cfuncs.pyx"]},
     {name = "stratigrapy.layers.cfuncs", sources = ["stratigrapy/layers/cfuncs.pyx"]},
     {name = "stratigrapy.plot.cfuncs", sources = ["stratigrapy/plot/cfuncs.pyx"]},
+    {name = "stratigrapy.components.diffusion.cfuncs", sources = ["stratigrapy/components/diffusion/cfuncs.pyx"]},
     {name = "stratigrapy.components.stream_power.cfuncs", sources = ["stratigrapy/components/stream_power/cfuncs.pyx"]},
     {name = "stratigrapy.components.landsliding.cfuncs", sources = ["stratigrapy/components/landsliding/cfuncs.pyx"]},
 ]

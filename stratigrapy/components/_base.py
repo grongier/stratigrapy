@@ -352,6 +352,14 @@ class _BaseStreamPower(_BaseDiffuser):
     _unit_agnostic = True
 
     _info = {
+        "flow__upstream_node_order": {
+            "dtype": int,
+            "intent": "in",
+            "optional": False,
+            "units": "-",
+            "mapping": "node",
+            "doc": "Node array containing downstream-to-upstream ordered list of node IDs",
+        },
         "flow__receiver_node": {
             "dtype": int,
             "intent": "in",
@@ -503,6 +511,7 @@ class _BaseStreamPower(_BaseDiffuser):
         self.ref_water_flux = ref_water_flux
 
         # Fields for stream power
+        self._node_order = grid.at_node["flow__upstream_node_order"]
         self._flow_receivers = grid.at_node["flow__receiver_node"][..., np.newaxis]
         self._link_to_receiver = grid.at_node["flow__link_to_receiver_node"][
             ..., np.newaxis

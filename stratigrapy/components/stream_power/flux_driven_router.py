@@ -39,13 +39,17 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
     and marine domains.
 
     Note that this is a simple implementation that doesn't include all the
-    elements to improve stability of the original Landlab component.
+    elements to improve stability of the original Landlab component. The flux
+    limiter is applied to each lithology separately.
 
     References
     ----------
     Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
         The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
         https://doi.org/10.5194/gmd-10-4577-2017
+    Granjeon, D. (1996)
+        Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
+        https://theses.hal.science/tel-00648827
     """
 
     _name = "FluxDrivenRouter"
@@ -223,9 +227,6 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
         self._critical_flux_br = convert_to_array(critical_flux_br)
 
-        # Fields for stream power
-        self._node_order = grid.at_node["flow__upstream_node_order"]
-
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
         n_receivers = self._flow_receivers.shape[1]
@@ -338,7 +339,6 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             self._erosion_flux_sed,
             self._erosion_flux_br,
             self._max_sediment_outflux,
-            dt,
         )
 
         self._apply_fluxes(dt, update_compatible, update)

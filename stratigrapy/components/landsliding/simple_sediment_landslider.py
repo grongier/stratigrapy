@@ -133,8 +133,8 @@ class SimpleSedimentLandslider(_BaseRouter):
         super().__init__(grid, 1, porosity, fields_to_track)
 
         # Parameters
-        self._repose_angle_cont = convert_to_array(repose_angle_cont)
-        self._repose_angle_mar = convert_to_array(repose_angle_mar)
+        self._repose_angle_cont = np.deg2rad(convert_to_array(repose_angle_cont))
+        self._repose_angle_mar = np.deg2rad(convert_to_array(repose_angle_mar))
         self._max_erosion_rate = (
             np.inf if max_erosion_rate is None else max_erosion_rate
         )
@@ -226,13 +226,11 @@ class SimpleSedimentLandslider(_BaseRouter):
         self._steepest_link[:] = np.take_along_axis(
             self._link_to_receiver, self._steepest_receivers, axis=1
         )
-        self._repose_slope[:] = np.arctan(
-            np.deg2rad(
-                np.sum(
-                    self._repose_angle * self._active_layer_composition,
-                    axis=1,
-                    keepdims=True,
-                )
+        self._repose_slope[:] = np.tan(
+            np.sum(
+                self._repose_angle * self._active_layer_composition,
+                axis=1,
+                keepdims=True,
             )
         )
         self._slope_difference[:] = self._steepest_slope - self._repose_slope
