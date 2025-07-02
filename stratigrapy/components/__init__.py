@@ -2,6 +2,7 @@ from .sea_level import SeaLevelCalculator
 from .weathering import BedrockWeatherer
 from .diffusion import GravityDrivenDiffuser
 from .diffusion import GravityDrivenRouter
+from .stream_power import WaterDrivenDiffuser
 from .stream_power import WaterDrivenRouter
 from .stream_power import FluxDrivenRouter
 from .landsliding import SimpleSedimentLandslider
@@ -12,6 +13,7 @@ COMPONENTS = [
     BedrockWeatherer,
     GravityDrivenDiffuser,
     GravityDrivenRouter,
+    WaterDrivenDiffuser,
     WaterDrivenRouter,
     FluxDrivenRouter,
     SimpleSedimentLandslider,

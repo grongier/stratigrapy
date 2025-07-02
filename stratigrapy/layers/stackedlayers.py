@@ -436,7 +436,7 @@ class StackedLayers:
             return np.sum(self.dz * (1.0 - self[porosity]), axis=axis)
         else:
             porosity = np.asarray(porosity)
-            if porosity.ndim == self.dz.ndim:
+            if porosity.shape == self.dz.shape[-len(porosity.shape):]:
                 return np.sum(self.dz * (1.0 - porosity), axis=axis)
             else:
                 return np.sum(self.dz, axis=axis) * (1.0 - porosity)

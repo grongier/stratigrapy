@@ -37,8 +37,6 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
     """Water-driven diffusion of a Landlab field in continental and marine domains
     based on a routing scheme.
 
-    The flux limiter is applied to each lithology separately.
-
     References
     ----------
     Granjeon, D. (1996)

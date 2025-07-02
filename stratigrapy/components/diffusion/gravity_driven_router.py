@@ -40,9 +40,6 @@ class GravityDrivenRouter(_BaseRouter, _BaseDiffuser):
     non-linear (when the critical-anlge parameters are defined) following Roering
     et al. (1999).
 
-    Contrary to Gervais (2004), the flux limiter is applied to each lithology
-    separately.
-
     TODO: Add separate bedrock diffusivities and fluxes like WaterDrivenRouter?
 
     References

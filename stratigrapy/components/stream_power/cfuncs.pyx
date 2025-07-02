@@ -43,19 +43,18 @@ cpdef void calculate_flux_limiter(
     const id_t [:, :] neighbors,
     const id_t [:, :] links_to_neighbors,
     const int8_t [:, :] link_dirs_at_node,
-    const cython.floating [:] topography,
     const cython.floating [:, :] sediment_flux_at_links,
     const cython.floating [:, :] max_sediment_flux,
     const cython.floating [:, :] sediment_input,
-    cython.floating [:] flux_limiter,
-): # noexcept nogil:
+    cython.floating [:, :] flux_limiter,
+) noexcept nogil:
     """Calculates the flux limiter."""
     cdef unsigned int n_nodes = node_order.shape[0]
     cdef unsigned int n_neighbors = neighbors.shape[1]
     cdef unsigned int n_sediments = sediment_input.shape[1]
     cdef unsigned int node, i, j, k
     cdef int neighbor, link
-    cdef double total_outflux, max_outflux
+    cdef double total_outflux, max_outflux, outflux
 
     # Iterate top to bottom through the nodes, update sediment out- and influx.
     # Because calculation of the outflux requires the influx, this operation
@@ -65,27 +64,28 @@ cpdef void calculate_flux_limiter(
         # Choose the node id
         node = node_order[i]
 
-        # Compute the available sediments, i.e., the maximum ouflux, and the
-        # total outflux.
-        max_outflux = 0.
-        total_outflux = 0.
-        for j in range(n_neighbors):
-            link = links_to_neighbors[node, j]
-            neighbor = neighbors[node, j]
-            if topography[node] >= topography[neighbor]:
-                for k in range(n_sediments):
-                    total_outflux -= sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
-            else:
-                for k in range(n_sediments):
-                    max_outflux += flux_limiter[neighbor]*sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
+        # For each sediment class...
         for k in range(n_sediments):
+
+            # Compute the available sediments, i.e., the maximum ouflux, and the
+            # total outflux.
+            max_outflux = 0.
+            total_outflux = 0.
+            for j in range(n_neighbors):
+                link = links_to_neighbors[node, j]
+                neighbor = neighbors[node, j]
+                outflux = sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
+                if outflux <= 0.:
+                    total_outflux -= outflux
+                else:
+                    max_outflux += flux_limiter[neighbor, k]*outflux
             max_outflux += max_sediment_flux[node, k] + sediment_input[node, k]
 
-        # Compute the flux limiter
-        if total_outflux > 0. and max_outflux/total_outflux < 1.:
-            flux_limiter[node] = max_outflux/total_outflux
-        else:
-            flux_limiter[node] = 1.
+            # Compute the flux limiter
+            if total_outflux > 0. and max_outflux/total_outflux < 1.:
+                flux_limiter[node, k] = max_outflux/total_outflux
+            else:
+                flux_limiter[node, k] = 1.
 
 
 @cython.boundscheck(False)

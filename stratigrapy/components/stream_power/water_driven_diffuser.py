@@ -1,4 +1,4 @@
-"""Gravity-driven diffuser"""
+"""Water-driven diffuser"""
 
 # MIT License
 
@@ -25,53 +25,52 @@
 
 import numpy as np
 
-from ...utils import convert_to_array
-from .._base import _BaseDiffuser
-from ..stream_power.cfuncs import calculate_flux_limiter
+from .._base import _BaseStreamPower
+from .cfuncs import calculate_flux_limiter
 
 
 ################################################################################
 # Component
 
 
-class GravityDrivenDiffuser(_BaseDiffuser):
-    """Gravity-driven diffusion of a Landlab field in continental and marine domains
-    based on a finite-volume scheme. The diffusion can be linear (the default) or
-    non-linear (when the critical-anlge parameters are defined) following Roering
-    et al. (1999).
+class WaterDrivenDiffuser(_BaseStreamPower):
+    """Water-driven diffusion of a Landlab field in continental and marine domains
+    based on a finite-volume scheme.
 
-    This component is not a re-implementation of Gervais (2004), but it is
-    heavily based on it. Instead of a implicit or semi-implicit approach
-    starting from updating the topography, it uses a fully explicit approach
-    that ends with updating the topography.
+    This is a simple extension of the GravityDrivenDiffuser to account for water
+    flow in a stream-power-like formula. Contrary to the WaterDrivenRouter,
+    sediments can only be transported in a D4 scheme. This should be similar to
+    Granjeon (1996), but details are lacking to actually ensure that it is the
+    case. It needs a more thorough testing, as it looks quite unstable.
 
     References
     ----------
+    Granjeon, D. (1996)
+        Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
+        https://theses.hal.science/tel-00648827
     Gervais, V. (2004)
         Étude et Simulation d'un Modèle Stratigraphique Multi-Lithologique sous Contrainte de Taux d'Érosion Maximal
         https://theses.hal.science/tel-01445562/
-    Roering, J. J., Kirchner, J. W., & Dietrich, W. E. (1999)
-        Evidence for nonlinear, diffusive sediment transport on hillslopes and implications for landscape morphology
-        https://doi.org/10.1029/1998WR900090
     """
 
-    _name = "GravityDrivenDiffuser"
+    _name = "WaterDrivenDiffuser"
 
     def __init__(
         self,
         grid,
-        diffusivity_cont=0.01,
-        diffusivity_mar=0.001,
-        critical_angle_cont=None,
-        critical_angle_mar=None,
+        transportability_cont=1e-5,
+        transportability_mar=1e-6,
         wave_base=20.0,
+        critical_flux=0.0,
         porosity=0.0,
-        max_erosion_rate_sed=0.01,
+        max_erosion_rate_sed=1e-2,
         active_layer_rate_sed=None,
         bedrock_composition=1.0,
-        max_erosion_rate_br=0.01,
+        max_erosion_rate_br=1e-2,
         active_layer_rate_br=None,
+        exponent_discharge=1.0,
         exponent_slope=1.0,
+        ref_water_flux=None,
         fields_to_track=None,
     ):
         """
@@ -79,20 +78,17 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         ----------
         grid : ModelGrid
             A grid.
-        diffusivity_cont : float or array-like (m2/time)
-            The diffusivity of the sediments over the continental domain for one
+        transportability_cont : float or array-like (m/time)
+            The transportability of the sediments over the continental domain
+            for one or multiple lithologies.
+        transportability_mar : float or array-like (m/time)
+            The transportability of the sediments over the marine domain for one
             or multiple lithologies.
-        diffusivity_mar : float or array-like (m2/time)
-            The diffusivity of the sediments over the marine domain for one or
-            multiple lithologies.
-        critical_angle_cont : float or array-like (degree), optional
-            The critical angle in the continental domain for one or multiple
-            lithologies above which sediments move downslope by mass wasting.
-        critical_angle_mar : float or array-like (degree), optional
-            The critical angle in the continental domain for one or multiple
-             ithologies above which sediments move downslope by mass wasting.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
+        critical_flux : float or array-like (m3/time)
+            Critical sediment flux to start displace sediments in the stream
+            power law.
         porosity : float or array-like (-)
             The porosity of the sediments at the time of deposition for one or
             multiple lithologies. When computing the active layer, this porosity
@@ -118,97 +114,68 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             The rate of formation of the active layer for the bedrock, which is
             used to determine the composition of the transported sediments. By
             default, it is set by the maximum erosion rate of the bedrock.
+        exponent_discharge : float (-)
+            The exponent for the water discharge.
         exponent_slope : float (-)
             The exponent for the slope.
+        ref_water_flux : float or string (m3/time), optional
+            The reference water flux by which the water discharge is normalized.
+            If a float, that value is used at each time step; if 'max', the
+            maximum value of discharge at each time step is used.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
+        self._flow_receivers = grid.at_node["flow__receiver_node"][..., np.newaxis]
+        n_receivers = self._flow_receivers.shape[1]
+
         super().__init__(
-            grid,
-            diffusivity_cont,
-            diffusivity_mar,
-            wave_base,
-            porosity,
-            max_erosion_rate_sed,
-            active_layer_rate_sed,
-            bedrock_composition,
-            max_erosion_rate_br,
-            active_layer_rate_br,
-            exponent_slope,
-            fields_to_track,
+            grid=grid,
+            number_of_neighbors=n_receivers,
+            diffusivity_cont=transportability_cont,
+            diffusivity_mar=transportability_mar,
+            wave_base=wave_base,
+            critical_flux=critical_flux,
+            porosity=porosity,
+            max_erosion_rate_sed=max_erosion_rate_sed,
+            active_layer_rate_sed=active_layer_rate_sed,
+            bedrock_composition=bedrock_composition,
+            max_erosion_rate_br=max_erosion_rate_br,
+            active_layer_rate_br=active_layer_rate_br,
+            exponent_discharge=exponent_discharge,
+            exponent_slope=exponent_slope,
+            ref_water_flux=ref_water_flux,
+            fields_to_track=fields_to_track,
         )
 
-        # Parameters
-        if critical_angle_cont is None:
-            self._critical_slope_cont = None
-        else:
-            self._critical_slope_cont = convert_to_array(critical_angle_cont)
-            if np.all(self._critical_slope_cont == 0.0):
-                self._critical_slope_cont = None
-            else:
-                self._critical_slope_cont = np.tan(
-                    np.deg2rad(self._critical_slope_cont)
-                )
-        if critical_angle_mar is None:
-            self._critical_slope_mar = None
-        else:
-            self._critical_slope_mar = convert_to_array(critical_angle_mar)
-            if np.all(self._critical_slope_mar == 0.0):
-                self._critical_slope_mar = None
-            else:
-                self._critical_slope_mar = np.tan(np.deg2rad(self._critical_slope_mar))
-
-        # Physical fields
+        # Fields for stream power
         n_links = grid.number_of_links
-        self._bathymetry_at_links = np.zeros(n_links)
+        self._receiver_link = grid.at_node["flow__link_to_receiver_node"]
+        if self._receiver_link.ndim == 1:
+            self._receiver_link = self._receiver_link[:, np.newaxis]
+        self._water_flux_at_links = np.zeros((n_links, 1))
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
         n_sediments = self._stratigraphy.number_of_classes
-        self._node_order = np.zeros(n_nodes, dtype=int)
         self._K_sed_at_links = np.zeros((n_links, n_sediments))
         self._slope_at_links = np.zeros((n_links, 1))
-        if (
-            self._critical_slope_cont is not None
-            and self._critical_slope_mar is not None
-        ):
-            self._thres_slope_at_links = np.zeros((n_links, n_sediments))
-            self._critical_slope_at_links = np.zeros((n_links, n_sediments))
         self._active_layer_composition_at_links = np.zeros((n_links, n_sediments))
         self._sediment_flux_at_links = np.zeros((n_links, n_sediments))
         self._sediment_flux = np.zeros((n_links, n_sediments))
         self._sediment_rate = np.zeros((n_nodes, n_sediments))
         self._max_sediment_flux = np.zeros((n_nodes, n_sediments))
-        self._sediment_input = np.zeros((n_nodes, n_sediments))
         self._flux_limiter = np.zeros((n_nodes, n_sediments))
         self._flux_limiter_at_links = np.zeros((n_links, n_sediments))
 
-    def _adjust_sediment_diffusivity(self):
+    def _map_water_flux_to_links(self):
         """
-        Ajusts the sediment diffusivity based on the slope over the continental
-        and marine domains.
+        Maps the water flux from the nodes to the links.
         """
-        self._grid.map_mean_of_link_nodes_to_link(
-            self._bathymetry[:, 0], out=self._bathymetry_at_links
-        )
-
-        self._critical_slope_at_links[self._bathymetry_at_links == 0.0] = (
-            self._critical_slope_cont
-        )
-        self._critical_slope_at_links[self._bathymetry_at_links > 0.0] = (
-            self._critical_slope_mar
-        )
-
-        self._thres_slope_at_links[:] = np.where(
-            np.abs(self._slope_at_links) >= self._critical_slope_at_links,
-            self._critical_slope_at_links - 1e-12,
-            self._slope_at_links,
-        )
-
-        self._K_sed_at_links /= (
-            1.0 - (self._thres_slope_at_links / self._critical_slope_at_links) ** 2
-        )
+        # With D8 MFD it looks like the first four receivers are the D4 ones
+        self._water_flux_at_links[self._receiver_link[:, :4].ravel(), 0] = (
+            self._flow_proportions[:, :4] * self._water_flux[:, :4]
+        ).ravel()
 
     def _calculate_sediment_flux(self, dt):
         """
@@ -228,17 +195,13 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             self._active_layer_composition[:, 0],
             out=self._active_layer_composition_at_links,
         )
-
-        if (
-            self._critical_slope_cont is not None
-            and self._critical_slope_mar is not None
-        ):
-            self._adjust_sediment_diffusivity()
+        self._map_water_flux_to_links()
 
         self._sediment_flux_at_links[:] = (
             -self._K_sed_at_links
             * np.sign(self._slope_at_links)
             * self._active_layer_composition_at_links
+            * self._water_flux_at_links**self._m
             * np.abs(self._slope_at_links) ** self._n
         )
 
@@ -257,7 +220,6 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             )
         self._max_sediment_flux[:] = cell_area * self._active_layer[:, 0] / dt
 
-        self._node_order[:] = np.argsort(self._topography)
         self._sediment_flux[self._grid.link_at_face] = (
             self._sediment_flux_at_links[self._grid.link_at_face]
             * self._grid.length_of_face[:, np.newaxis]
@@ -267,7 +229,6 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             self._grid.active_adjacent_nodes_at_node,
             self._grid.links_at_node,
             self._grid.link_dirs_at_node,
-            self._topography,
             self._sediment_flux,
             self._max_sediment_flux,
             self._sediment_input,
@@ -297,6 +258,7 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             deposition occurs in the existing layer.
         """
         core_nodes = self._grid.core_nodes
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
         self._calculate_sediment_flux(dt)
         self._threshold_sediment_flux(dt)
@@ -305,7 +267,12 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         )
 
         self._sediment_thickness[core_nodes] = (
-            -self._sediment_rate[core_nodes] * dt / (1.0 - self._porosity)
+            (
+                self._sediment_input[core_nodes] / cell_area[core_nodes]
+                - self._sediment_rate[core_nodes]
+            )
+            * dt
+            / (1.0 - self._porosity)
         )
 
         self._update_physical_fields(dt, update_compatible, update)
