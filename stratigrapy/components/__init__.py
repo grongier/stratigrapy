@@ -1,4 +1,5 @@
 from .sea_level import SeaLevelCalculator
+from .sea_level import CyclicSeaLevelCalculator
 from .weathering import BedrockWeatherer
 from .diffusion import GravityDrivenDiffuser
 from .diffusion import GravityDrivenRouter
@@ -10,6 +11,7 @@ from .compaction import SedimentCompactor
 
 COMPONENTS = [
     SeaLevelCalculator,
+    CyclicSeaLevelCalculator,
     BedrockWeatherer,
     GravityDrivenDiffuser,
     GravityDrivenRouter,

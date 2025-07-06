@@ -38,9 +38,10 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
     """SPACE model for erosion and transport of a Landlab field in continental
     and marine domains.
 
-    Note that this is a simple implementation that doesn't include all the
-    elements to improve stability of the original Landlab component. The flux
-    limiter is applied to each lithology separately.
+    This is a simple implementation that doesn't include all the elements of the
+    original Landlab component. In particular, this component updates the
+    stratigraphy based on the difference between sediment influx and outflux,
+    and not based on erosion and deposition like SPACE.
 
     References
     ----------
@@ -137,7 +138,6 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         erodibility_br_mar=1e-10,
         bedrock_composition=1.0,
         critical_flux_br=0.0,
-        active_layer_rate_br=None,
         exponent_discharge=0.5,
         exponent_slope=1.0,
         ref_water_flux=None,
@@ -171,11 +171,12 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
-            thickness of the active layer if `active_layer_rate` is None.
-        active_layer_rate : float or array-like (m/time), optional
-            The rate of formation of the active layer, which is used to determine
-            the composition of the transported sediments. By default, it is set
-            by the maximum erosion rate.
+            thickness of the active layer of the sediments if `active_layer_rate_sed`
+            is None.
+        active_layer_rate_sed : float (m/time), optional
+            The rate of formation of the active layer for sediments, which is used
+            to determine the composition of the transported sediments. By default,
+            it is set by the maximum erosion rate of the sediments.
         erodibility_br_cont : float (m/time)
             The erodibility of the berock over the continental domain.
         erodibility_br_mar : float (m/time)
@@ -213,7 +214,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             active_layer_rate_sed=active_layer_rate_sed,
             bedrock_composition=bedrock_composition,
             max_erosion_rate_br=0.0,
-            active_layer_rate_br=active_layer_rate_br,
+            active_layer_rate_br=0.0,
             exponent_discharge=exponent_discharge,
             exponent_slope=exponent_slope,
             ref_water_flux=ref_water_flux,
@@ -235,6 +236,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._erosion_flux_sed = np.zeros((n_nodes, n_receivers, n_sediments))
         self._erosion_flux_br = np.zeros((n_nodes, n_receivers, n_sediments))
         self._ratio_excess_thickness = np.zeros((n_nodes, 1, 1))
+        self._critical_rate_br = np.zeros((n_nodes, 1, n_sediments))
         self._ratio_critical_outflux_br = np.zeros((n_nodes, n_receivers, n_sediments))
 
     def _calculate_bedrock_diffusivity(self):
@@ -246,62 +248,75 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._K_br[self._bathymetry[:, 0] > 0.0, 0] = self._K_br_mar * np.exp(
             -self._bathymetry[self._bathymetry[:, 0] > 0.0] / self.wave_base
         )
-        self._K_br[self._grid.core_nodes][self._stratigraphy.thickness > 0.0] = 0.0
 
     def _calculate_sediment_flux(self, dt):
         """
         Calculates the erosion flux of sediments for multiple lithologies.
         """
+        core_nodes = self._grid.core_nodes
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+
         self._calculate_sediment_diffusivity()
         self._calculate_active_layer_composition(dt)
 
         self._erosion_flux_sed[:] = (
             self._K_sed
-            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
             * self._active_layer_composition
             * (self._water_flux * self._flow_proportions) ** self._m
             * self._slope**self._n
         )
+        self._critical_rate[core_nodes] = self._critical_flux / cell_area[core_nodes]
+        self._ratio_critical_outflux[:] = 0.0
         np.divide(
             self._erosion_flux_sed,
-            self._critical_flux,
+            self._critical_rate,
             out=self._ratio_critical_outflux,
-            where=self._critical_flux != 0,
+            where=self._critical_rate != 0,
         )
-        self._erosion_flux_sed[:] -= self._critical_flux * (
+        self._erosion_flux_sed[:] -= self._critical_rate * (
             1.0 - np.exp(-self._ratio_critical_outflux)
         )
+
         self._ratio_excess_thickness[self._grid.core_nodes, 0, 0] = np.exp(
             -self._stratigraphy.thickness / self.critical_thickness
         )
         self._erosion_flux_sed[:] *= 1.0 - self._ratio_excess_thickness
+        self._erosion_flux_sed[:] *= cell_area
 
     def _calculate_bedrock_flux(self):
         """
         Calculates the erosion flux of the bedrock for multiple lithologies.
         """
+        core_nodes = self._grid.core_nodes
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+
         self._calculate_bedrock_diffusivity()
 
         self._erosion_flux_br[:] = (
             self._K_br
-            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
             * self._bedrock_composition
             * (self._water_flux * self._flow_proportions) ** self._m
             * self._slope**self._n
         )
+        self._critical_rate_br[self._grid.core_nodes] = (
+            self._critical_flux_br / cell_area[core_nodes]
+        )
+        self._ratio_critical_outflux_br[:] = 0.0
         np.divide(
             self._erosion_flux_br,
-            self._critical_flux_br,
+            self._critical_rate_br,
             out=self._ratio_critical_outflux_br,
-            where=self._critical_flux_br != 0,
+            where=self._critical_rate_br != 0,
         )
-        self._erosion_flux_br[:] -= self._critical_flux_br * (
+        self._erosion_flux_br[:] -= self._critical_rate_br * (
             1.0 - np.exp(-self._ratio_critical_outflux_br)
         )
+
         self._erosion_flux_br[:] *= self._ratio_excess_thickness
+        self._erosion_flux_br[:] *= cell_area
 
     def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the displacer for one timestep, dt.
+        """Run the router for one timestep, dt.
 
         Parameters
         ----------
@@ -339,6 +354,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             self._erosion_flux_sed,
             self._erosion_flux_br,
             self._max_sediment_outflux,
+            self._porosity,
         )
 
         self._apply_fluxes(dt, update_compatible, update)

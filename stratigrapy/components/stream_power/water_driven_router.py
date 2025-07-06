@@ -158,7 +158,7 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
-            thickness of the active layer of the sediments if `active_layer_rate`
+            thickness of the active layer of the sediments if `active_layer_rate_sed`
             is None.
         active_layer_rate_sed : float (m/time), optional
             The rate of formation of the active layer for sediments, which is used
@@ -169,7 +169,7 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             the bedrock.
         max_erosion_rate_br : float (m/time)
             The maximum erosion rate of the bedrock. The erosion rate defines the
-            thickness of the active layer of the bedrock if `active_layer_rate`
+            thickness of the active layer of the bedrock if `active_layer_rate_br`
             is None.
         active_layer_rate_br : float (m/time), optional
             The rate of formation of the active layer for the bedrock, which is
@@ -213,28 +213,33 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         """
         Calculates the sediment outflux for multiple lithologies.
         """
+        core_nodes = self._grid.core_nodes
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
+
         self._calculate_sediment_diffusivity()
         self._calculate_active_layer_composition(dt)
 
         self._sediment_outflux[:] = (
             self._K_sed
-            * self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
             * self._active_layer_composition
             * (self._water_flux * self._flow_proportions) ** self._m
             * self._slope**self._n
         )
+        self._critical_rate[core_nodes] = self._critical_flux / cell_area[core_nodes]
+        self._ratio_critical_outflux[:] = 0.0
         np.divide(
             self._sediment_outflux,
-            self._critical_flux,
+            self._critical_rate,
             out=self._ratio_critical_outflux,
-            where=self._critical_flux != 0,
+            where=self._critical_rate != 0,
         )
-        self._sediment_outflux[:] -= self._critical_flux * (
+        self._sediment_outflux[:] -= self._critical_rate * (
             1.0 - np.exp(-self._ratio_critical_outflux)
         )
+        self._sediment_outflux[:] *= cell_area
 
     def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the diffuser for one timestep, dt.
+        """Run the router for one timestep, dt.
 
         Parameters
         ----------
@@ -252,6 +257,9 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
 
         self._normalize_water_flux()
 
+        # Here we merge fluxes from the sediments and the bedrock together,
+        # assuming that weathered bedrock is perfectly equivalent to sediments,
+        # including in terms of porosity.
         self._calculate_sediment_outflux(dt)
         if (
             self._max_erosion_rate_sed != self._active_layer_rate_sed

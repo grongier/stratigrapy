@@ -541,6 +541,7 @@ class _BaseStreamPower(_BaseDiffuser):
                 self._sediment_input = self._sediment_input[:, np.newaxis]
         else:
             self._sediment_input = np.zeros((n_nodes, n_sediments))
+        self._critical_rate = np.zeros((n_nodes, 1, n_sediments))
         self._ratio_critical_outflux = np.zeros((n_nodes, n_receivers, n_sediments))
 
     def _normalize_water_flux(self):
@@ -602,9 +603,6 @@ class _BaseRouter(_BaseMover):
 
         # Parameters
         self._porosity = convert_to_array(porosity)
-
-        # Physical fields
-        self._topography = grid.at_node["topographic__elevation"]
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes

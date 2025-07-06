@@ -248,6 +248,9 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
+        # Here we merge fluxes from the sediments and the bedrock together,
+        # assuming that weathered bedrock is perfectly equivalent to sediments,
+        # including in terms of porosity.
         if (
             self._max_erosion_rate_sed != self._active_layer_rate_sed
             or self.max_erosion_rate_br != self._active_layer_rate_br
@@ -267,7 +270,6 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             self._grid.active_adjacent_nodes_at_node,
             self._grid.links_at_node,
             self._grid.link_dirs_at_node,
-            self._topography,
             self._sediment_flux,
             self._max_sediment_flux,
             self._sediment_input,

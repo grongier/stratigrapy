@@ -61,7 +61,6 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         transportability_cont=1e-5,
         transportability_mar=1e-6,
         wave_base=20.0,
-        critical_flux=0.0,
         porosity=0.0,
         max_erosion_rate_sed=1e-2,
         active_layer_rate_sed=None,
@@ -86,9 +85,6 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             or multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
-        critical_flux : float or array-like (m3/time)
-            Critical sediment flux to start displace sediments in the stream
-            power law.
         porosity : float or array-like (-)
             The porosity of the sediments at the time of deposition for one or
             multiple lithologies. When computing the active layer, this porosity
@@ -97,7 +93,7 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         max_erosion_rate_sed : float (m/time), optional
             The maximum erosion rate of the sediments. If None, all the sediments
             may be eroded in a single time step. The erosion rate defines the
-            thickness of the active layer of the sediments if `active_layer_rate`
+            thickness of the active layer of the sediments if `active_layer_rate_sed`
             is None.
         active_layer_rate_sed : float (m/time), optional
             The rate of formation of the active layer for sediments, which is used
@@ -108,7 +104,7 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             the bedrock.
         max_erosion_rate_br : float (m/time)
             The maximum erosion rate of the bedrock. The erosion rate defines the
-            thickness of the active layer of the bedrock if `active_layer_rate`
+            thickness of the active layer of the bedrock if `active_layer_rate_br`
             is None.
         active_layer_rate_br : float (m/time), optional
             The rate of formation of the active layer for the bedrock, which is
@@ -135,7 +131,7 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             diffusivity_cont=transportability_cont,
             diffusivity_mar=transportability_mar,
             wave_base=wave_base,
-            critical_flux=critical_flux,
+            critical_flux=0.0,
             porosity=porosity,
             max_erosion_rate_sed=max_erosion_rate_sed,
             active_layer_rate_sed=active_layer_rate_sed,
@@ -211,6 +207,9 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         """
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
+        # Here we merge fluxes from the sediments and the bedrock together,
+        # assuming that weathered bedrock is perfectly equivalent to sediments,
+        # including in terms of porosity.
         if (
             self._max_erosion_rate_sed != self._active_layer_rate_sed
             or self.max_erosion_rate_br != self._active_layer_rate_br

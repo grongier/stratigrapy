@@ -1,4 +1,4 @@
-"""Sea level calculator"""
+"""Cyclic sea level calculator"""
 
 # MIT License
 
@@ -23,20 +23,20 @@
 # SOFTWARE.
 
 
-from functools import partial
 import numpy as np
-from scipy.interpolate import CubicSpline, PchipInterpolator, make_interp_spline
 from landlab import Component
+
+from ...utils import convert_to_array, match_array_lengths
 
 
 ################################################################################
 # Component
 
 
-class SeaLevelCalculator(Component):
-    """Calculate sea level based on interpolating from control points."""
+class CyclicSeaLevelCalculator(Component):
+    """Calculate sea level based on a mixture of sinusoids."""
 
-    _name = "SeaLevelCalculator"
+    _name = "CyclicSeaLevelCalculator"
 
     _unit_agnostic = True
 
@@ -70,50 +70,47 @@ class SeaLevelCalculator(Component):
     def __init__(
         self,
         grid,
-        control_time,
-        control_sea_level,
-        interpolation="linear",
+        wavelength=100000.0,
+        time_shift=0.0,
+        amplitude=5.0,
+        mean=0.0,
+        rate=0.0,
     ):
         """
         Parameters
         ----------
         grid : ModelGrid
             A grid.
-        control_time : array
-            The time at each control point.
-        control_sea_level : array
-            The sea level at each control point.
-        interpolation : str
-            The interpolation method, which can be:
-                - 'linear' for linear interpolation (the default).
-                - 'quadratic' for spline interpolation of second order.
-                - 'cubic' for spline interpolation of third order.
-                - 'monotonic' for monotonic spline interpolation of third order.
+        wavelength : float or array
+            The wavelength(s) of the sinusoid(s) driving sea level variation.
+        time_shift : float or array
+            The time shift(s) of the sinusoid(s) driving sea level variation,
+            which control(s) sea level at time 0.
+        amplitude : float or array
+            The amplitude(s) of the sinusoid(s) driving sea level variation.
+        mean : float
+            The mean sea level.
+        rate : float
+            The linear rate of sea level increase.
         """
         super().__init__(grid)
 
         self.initialize_output_fields()
 
         # Parameters
+        self.wavelength = convert_to_array(wavelength)
+        self.time_shift = convert_to_array(time_shift)
+        self.amplitude = convert_to_array(amplitude)
+        self.wavelength, self.time_shift, self.amplitude = match_array_lengths(
+            self.wavelength, self.time_shift, self.amplitude
+        )
+        self.mean = mean
+        self.rate = rate
         self._time = 0.0
 
         # Physical fields
         self._topography = grid.at_node["topographic__elevation"]
         self._bathymetry = grid.at_node["bathymetric__depth"]
-
-        # Interpolator
-        if interpolation == "linear":
-            self._interpolator = partial(
-                np.interp, xp=control_time, fp=control_sea_level
-            )
-        elif interpolation == "quadratic":
-            self._interpolator = make_interp_spline(
-                control_time, control_sea_level, k=2
-            )
-        elif interpolation == "cubic":
-            self._interpolator = CubicSpline(control_time, control_sea_level)
-        elif interpolation == "monotonic":
-            self._interpolator = PchipInterpolator(control_time, control_sea_level)
 
         # Initialize the fields
         self.run_one_step(0.0)
@@ -128,12 +125,20 @@ class SeaLevelCalculator(Component):
         """
         self._time += dt
 
-        sea_level = self._interpolator(self._time)
+        sea_level = self.mean + self.rate * self._time
+        for wavelength, time_shift, amplitude in zip(
+            self.wavelength, self.time_shift, self.amplitude
+        ):
+            sea_level += amplitude * np.sin(
+                2.0 * np.pi * (self._time - time_shift) / wavelength
+            )
         self._grid.at_grid["sea_level__elevation"] = sea_level
 
         np.subtract(
             sea_level,
             self._topography,
             out=self._bathymetry,
-            where=(self._topography < sea_level),
+            where=(
+                self._topography < sea_level
+            ),  # & (self._grid.status_at_node == self._grid.BC_NODE_IS_CORE),
         )

@@ -25,7 +25,7 @@
 
 import numpy as np
 
-from .._base import _BaseHandler
+from .._base import _BaseMover
 from ...utils import convert_to_array
 
 
@@ -33,7 +33,7 @@ from ...utils import convert_to_array
 # Component
 
 
-class BedrockWeatherer(_BaseHandler):
+class BedrockWeatherer(_BaseMover):
     """Bedrock weathering in a StackedLayers.
 
     Reference
@@ -67,6 +67,7 @@ class BedrockWeatherer(_BaseHandler):
         max_weathering_rate=1e-5,
         weathering_decay_depth=1.0,
         wave_base=20.0,
+        porosity=0.0,
         bedrock_composition=1.0,
         fields_to_track=None,
     ):
@@ -81,6 +82,9 @@ class BedrockWeatherer(_BaseHandler):
             The characteristic weathering depth.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
+        porosity : float or array-like (-)
+            The porosity of the weathered material after formation for one or
+            multiple lithologies.
         bedrock_composition : float or array-like (-)
             The composition of the material is added to the StackedLayers from the
             bedrock.
@@ -94,6 +98,7 @@ class BedrockWeatherer(_BaseHandler):
         self.max_weathering_rate = max_weathering_rate
         self.weathering_decay_depth = weathering_decay_depth
         self.wave_base = wave_base
+        self._porosity = convert_to_array(porosity)
         self.bedrock_composition = convert_to_array(bedrock_composition)
 
         # Physical fields
@@ -134,7 +139,12 @@ class BedrockWeatherer(_BaseHandler):
 
         self._calculate_weathering_depth(dt)
         self._sediment_thickness[core_nodes] = (
-            self.bedrock_composition * self._weathering_depth[core_nodes]
+            self.bedrock_composition
+            * self._weathering_depth[core_nodes]
+            / (1.0 - self._porosity)
         )
 
         self._update_stratigraphy(dt, update_compatible, update, True)
+        self._topography[core_nodes] += np.sum(
+            self._porosity * self._sediment_thickness[core_nodes], axis=1
+        )

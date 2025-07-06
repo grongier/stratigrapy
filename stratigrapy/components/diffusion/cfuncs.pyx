@@ -39,7 +39,7 @@ ctypedef fused id_t:
 @cython.wraparound(False)
 cpdef void calculate_sediment_fluxes(
     const id_t [:] node_order,
-    const id_t [:, :] neigbors,
+    const id_t [:, :] neighbors,
     const cython.floating [:, :] flux_proportions,
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
@@ -49,7 +49,7 @@ cpdef void calculate_sediment_fluxes(
 ) noexcept nogil:
     """Calculates sediment influx."""
     cdef unsigned int n_nodes = node_order.shape[0]
-    cdef unsigned int n_receivers = neigbors.shape[1]
+    cdef unsigned int n_receivers = neighbors.shape[1]
     cdef unsigned int n_sediments = sediment_outflux.shape[2]
     cdef unsigned int node, i, j, k
     cdef double total_outflux, max_outflux
@@ -88,5 +88,5 @@ cpdef void calculate_sediment_fluxes(
                     # Add the outflux to the influx of the downstream node(s)
                     for j in range(n_receivers):
                         # TODO: Check this, it's not in the Landlab components, but it seems that it can fail otherwise
-                        if neigbors[node, j] > -1:
-                            sediment_influx[neigbors[node, j], k] += sediment_outflux[node, j, k]
+                        if neighbors[node, j] > -1:
+                            sediment_influx[neighbors[node, j], k] += sediment_outflux[node, j, k]
