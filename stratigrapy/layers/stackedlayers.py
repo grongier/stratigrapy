@@ -194,7 +194,7 @@ def resize_array(array, left_new_cap, right_new_cap):
         return array
 
     new_allocated = left_new_cap + array.shape[0] + right_new_cap
-    larger_array = np.empty((new_allocated,) + array.shape[1:], dtype=array.dtype)
+    larger_array = np.zeros((new_allocated,) + array.shape[1:], dtype=array.dtype)
     _right_new_cap = -right_new_cap if right_new_cap > 0 else None
     larger_array[left_new_cap:_right_new_cap] = array
 
@@ -345,7 +345,7 @@ class StackedLayers:
         self._number_of_sublayers = 0
 
         dims = (self.number_of_layers, self.number_of_stacks, self.number_of_classes)
-        self._attrs["_dz"] = np.empty(dims, dtype=float)
+        self._attrs["_dz"] = np.zeros(dims, dtype=float)
         self._resize(initial_allocation[0], initial_allocation[1])
         self._left_allocated = initial_allocation[0]
         self._right_allocated = initial_allocation[1]

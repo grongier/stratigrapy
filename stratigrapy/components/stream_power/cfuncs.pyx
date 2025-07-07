@@ -196,7 +196,8 @@ cpdef void calculate_sediment_fluxes(
                         sediment_outflux[node, j, k] = (
                             flow_proportions[node, j]*sediment_influx[node, k]
                             + erosion_flux_sed[node, j, k]
-                            + erosion_flux_br[node, j, k]*(1. - porosity[k]))
+                            + erosion_flux_br[node, j, k]*(1. - porosity[k])
+                        )
                         sediment_outflux[node, j, k] /= 1. + settling_velocity[k]*cell_area[node]/(flow_proportions[node, j]*water_flux[node])
                 # Compute the total outflux
                 total_outflux = 0.
