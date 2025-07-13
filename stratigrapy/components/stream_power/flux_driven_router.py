@@ -80,6 +80,14 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             "mapping": "node",
             "doc": "Node array of proportion of flow sent to each receiver.",
         },
+        "water__unit_flux_in": {
+            "dtype": float,
+            "intent": "in",
+            "optional": True,
+            "units": "m/s",
+            "mapping": "node",
+            "doc": "External volume water per area per time input to each node (e.g., rainfall rate)",
+        },
         "sediment__unit_flux_in": {
             "dtype": float,
             "intent": "in",
