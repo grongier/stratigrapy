@@ -1,0 +1,12 @@
+include LICENSE
+include README.md
+
+recursive-include src/stratigrapy *.pyx *.pxd *.hpp
+
+exclude environment*yml
+
+recursive-exclude examples *
+recursive-exclude stratigrapy *.c *.cpp
+
+prune */__pycache__
+global-exclude *.so *.pyc *.pyo *.pyd *.swp *.bak *~

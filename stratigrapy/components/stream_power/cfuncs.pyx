@@ -155,7 +155,7 @@ cpdef void calculate_sediment_fluxes(
     const cython.floating [:, :] flow_proportions,
     cython.floating [:, :] sediment_influx,
     cython.floating [:, :, :] sediment_outflux,
-    const cython.floating [:] settling_velocity,
+    const cython.floating [:, :] settling_velocity,
     cython.floating [:, :, :] erosion_flux_sed,
     cython.floating [:, :, :] erosion_flux_br,
     cython.floating [:, :] max_sediment_outflux,
@@ -198,7 +198,7 @@ cpdef void calculate_sediment_fluxes(
                             + erosion_flux_sed[node, j, k]
                             + erosion_flux_br[node, j, k]*(1. - porosity[k])
                         )
-                        sediment_outflux[node, j, k] /= 1. + settling_velocity[k]*cell_area[node]/(flow_proportions[node, j]*water_flux[node])
+                        sediment_outflux[node, j, k] /= 1. + settling_velocity[node, k]*cell_area[node]/(flow_proportions[node, j]*water_flux[node])
                 # Compute the total outflux
                 total_outflux = 0.
                 for j in range(n_receivers):

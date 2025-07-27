@@ -43,6 +43,11 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
     stratigraphy based on the difference between sediment influx and outflux,
     and not based on erosion and deposition like SPACE.
 
+    TODO: Properly adapt to the marine domain. For now the erosion coefficient
+    follows Granjeon (1996) and decreases as the bathymetry increases; the
+    settling velocity follows a similar approach to force deposition in the
+    marine domain.
+
     References
     ----------
     Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
@@ -230,7 +235,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         )
 
         # Parameters
-        self._settling_velocity = convert_to_array(settling_velocity)
+        self._settling_velocity_cont = convert_to_array(settling_velocity)
         self.critical_thickness = critical_thickness
         self._K_br_cont = convert_to_array(erodibility_br_cont)
         self._K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
@@ -240,6 +245,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         n_nodes = grid.number_of_nodes
         n_receivers = self._flow_receivers.shape[1]
         n_sediments = self._stratigraphy.number_of_classes
+        self._settling_velocity = np.zeros((n_nodes, n_sediments))
         self._K_br = np.zeros((n_nodes, 1, n_sediments))
         self._erosion_flux_sed = np.zeros((n_nodes, n_receivers, n_sediments))
         self._erosion_flux_br = np.zeros((n_nodes, n_receivers, n_sediments))
@@ -323,6 +329,15 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         self._erosion_flux_br[:] *= self._ratio_excess_thickness
         self._erosion_flux_br[:] *= cell_area
 
+    def _calculate_settling_velocity(self):
+        """
+        Calculates the settling velocity over the continental and marine domains.
+        """
+        self._settling_velocity[:] = self._settling_velocity_cont
+        self._settling_velocity[self._bathymetry[:, 0] > 0.0, 0] *= np.exp(
+            self._bathymetry[self._bathymetry[:, 0] > 0.0, 0] / self.wave_base
+        )
+
     def run_one_step(self, dt, update_compatible=False, update=False):
         """Run the router for one timestep, dt.
 
@@ -347,6 +362,7 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             self._calculate_active_layer(self._max_erosion_rate_sed * dt, 0.0)
         self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
         self._calculate_bedrock_flux()
+        self._calculate_settling_velocity()
 
         self._sediment_influx[:] = self._sediment_input
         self._sediment_outflux[:] = 0.0

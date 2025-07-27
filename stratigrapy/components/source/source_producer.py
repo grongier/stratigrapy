@@ -37,6 +37,8 @@ from landlab import Component
 class SourceProducer(Component):
     """Produce water and sediments from sources based on interpolating from
     control points.
+
+    Negative fluxes produced by interpolation are truncated to zero.
     """
 
     _name = "SourceProducer"
@@ -98,8 +100,6 @@ class SourceProducer(Component):
         """
         super().__init__(grid)
 
-        self.initialize_output_fields()
-
         # Parameters
         source_xy = np.asarray(source_xy)
         if source_xy.ndim == 1:
@@ -125,14 +125,20 @@ class SourceProducer(Component):
         self._time = 0.0
 
         # Fields
-        self._water_influx = grid.add_zeros(
-            "water__unit_flux_in", at="node", clobber=True
-        )
-        self._sediment_influx = grid.add_field(
-            "sediment__unit_flux_in",
-            np.zeros((grid.number_of_nodes, sediment_source_influx.shape[2])),
-            clobber=True,
-        )
+        if "water__unit_flux_in" not in grid.at_node.keys():
+            self._water_influx = grid.add_zeros(
+                "water__unit_flux_in", at="node", clobber=True
+            )
+        else:
+            self._water_influx = grid.at_node["water__unit_flux_in"]
+        if "sediment__unit_flux_in" not in grid.at_node.keys():
+            self._sediment_influx = grid.add_field(
+                "sediment__unit_flux_in",
+                np.zeros((grid.number_of_nodes, sediment_source_influx.shape[2])),
+                clobber=True,
+            )
+        else:
+            self._sediment_influx = grid.at_node["sediment__unit_flux_in"]
         if self._sediment_influx.ndim == 1:
             self._sediment_influx = self._sediment_influx[:, np.newaxis]
 
@@ -185,10 +191,12 @@ class SourceProducer(Component):
 
         self._water_influx[self._source_idx] = 0.0
         for i, interpolator in enumerate(self._water_interpolators):
-            self._water_influx[self._source_idx[i]] += interpolator(self._time)
+            value = interpolator(self._time)
+            if value > 0.:
+                self._water_influx[self._source_idx[i]] += value
         self._sediment_influx[self._source_idx] = 0.0
         for i, interpolators in enumerate(self._sediment_interpolators):
             for j, interpolator in enumerate(interpolators):
-                self._sediment_influx[self._source_idx[i], j] += interpolator(
-                    self._time
-                )
+                value = interpolator(self._time)
+                if value > 0.:
+                    self._sediment_influx[self._source_idx[i], j] += value
