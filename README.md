@@ -1,6 +1,8 @@
 # StratigraPy
 
-StratigraPy is a Python package for stratigraphic modeling based on [Landlab](https://github.com/landlab/landlab).
+StratigraPy is a Python package for stratigraphic modeling based on [Landlab](https://github.com/landlab/landlab). Similarly to Landlab, StratigraPy favors flexibility for prototyping and teaching rather than speed.
+
+StratigraPy is still experimental and under heavy development.
 
 ## Installation
 
@@ -14,35 +16,55 @@ Or from GitHub using pip:
 
 ## Usage
 
-Basic use:
+StratigraPy follows Landlab's API and you can check [Landlab's extensive documentation](https://landlab.csdms.io) to get an idea of its features. Here's a very basic example of setting up and running a model:
 
 ```
 import numpy as np
-from pybarsim import BarSim2D
 import matplotlib.pyplot as plt
+from stratigrapy import RasterModelGrid
+from stratigrapy.components import GravityDrivenRouter
 
-# Set the parameters
-run_time = 10000.
-barsim = BarSim2D(np.linspace(1000., 900., 200),
-                  np.array([(0., 950.), (run_time, 998.)]),
-                  np.array([(0., 25.), (run_time, 5.)]),
-                  spacing=100.)
+# Create the grid with two sediment classes
+grid = RasterModelGrid((50, 50),
+                       xy_spacing=(500., 500.),
+                       number_of_classes=2,
+                       initial_allocation=1020,
+                       number_of_layers_to_fuse=20,
+                       number_of_top_layers=20)
+grid.set_closed_boundaries_at_grid_edges(True, True, True, False)
+
+# Define the initial topography
+elevation = grid.add_zeros('topographic__elevation', at='node', clobber=True)
+elevation[grid.y_of_node > 15000.] = 100.
+
+# Define the bathymetry
+bathymetry = grid.add_zeros('bathymetric__depth', at='node', clobber=True)
+
+# Define a diffusion component
+gdr = GravityDrivenRouter(grid, diffusivity_cont=[2e-1, 2e-2])
+
 # Run the simulation
-barsim.run(run_time=10000., dt_fair_weather=15., dt_storm=1.)
-# Interpolate the outputs into a regular grid
-barsim.regrid(900., 1000., 0.5)
-# Compute the mean grain size
-barsim.finalize(on='record')
-# Plot the median grid size in the regular grid
-barsim.record_['Mean grain size'].plot(figsize=(12, 4))
-plt.show()
+for i in range(1000):
+    gdr.run_one_step(100.)
+    grid.stacked_layers.fuse(time=np.mean)
+grid.stacked_layers.fuse(finalize=True, time=np.mean)
+
+# Plot a slice through the domain with sediments and bedrock
+fig, ax = plt.subplots(figsize=(8, 4))
+pc = grid.plot_layers(ax, 'composition', i_class=1, mask_wedges=True, cmap='pink', zorder=2)
+fig.colorbar(pc[0], ax=ax, label='Fraction of the second sediment class')
+raster_y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)[:, 24]
+raster_z = grid.at_node['topographic__elevation'][grid.core_nodes].reshape(grid.cell_grid_shape)[:, 24]
+ymin, ymax = ax.get_ylim()
+ax.fill_between(raster_y, raster_z, ymin, color='#d9d9d9', zorder=1)
+ax.set(xlabel='y (m)', ylabel='z (m)', ylim=(ymin, ymax));
 ```
 
-For a more complete example, see...
+You can find more complete examples in the folder [examples](examples).
 
 ## Citation
 
-If you use StratigraPy in your research, please cite the original article(s) describing the method(s) you used (see the docstrings for the references).
+If you use StratigraPy in your research, please cite the original article(s) describing the method(s) you used (see the docstrings for the references). An acknowledgment of StratigraPy's use is always appreciated.
 
 ## Credits
 
