@@ -11,6 +11,9 @@ dependencies:
   - tqdm
   - cmocean
   - pyvista
+  - trame
+  - trame-vtk
+  - trame-vuetify
   - jupyter
   - pip:
     - stratigrapy

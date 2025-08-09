@@ -50,7 +50,7 @@ class SeaLevelCalculator(Component):
             "doc": "Land surface topographic elevation",
         },
         "sea_level__elevation": {
-            "dtype": "float",
+            "dtype": float,
             "intent": "out",
             "optional": False,
             "units": "m",
@@ -92,6 +92,7 @@ class SeaLevelCalculator(Component):
         """
         super().__init__(grid)
 
+        self._grid.at_grid["sea_level__elevation"] = 0.
         self.initialize_output_fields()
 
         # Parameters

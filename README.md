@@ -16,9 +16,9 @@ Or from GitHub using pip:
 
     pip install git+https://github.com/grongier/stratigrapy.git
 
-To run the Jupyter notebook in [examples](examples) you will also need tqdm, cmocean, pyvista, and jupyter, which you can install from pip too:
+To run the Jupyter notebook in [examples](examples) you will also need tqdm, cmocean, pyvista, trame, trame-vtk, trame-vuetify, and jupyter, which you can install from pip too:
 
-    pip install tqdm cmocean pyvista jupyter
+    pip install tqdm cmocean pyvista trame trame-vtk trame-vuetify jupyter
 
 You can also install everything using conda and the `environment.yml` file included in this repository:
 
