@@ -4,6 +4,8 @@ StratigraPy is a Python package for stratigraphic modeling based on [Landlab](ht
 
 StratigraPy is still experimental and under heavy development.
 
+[![Click to watch the video](https://img.youtube.com/vi/THp7vKp5ha4/0.jpg)](https://www.youtube.com/watch?v=THp7vKp5ha4)
+
 ## Installation
 
 You can directly install StratigraPy from pip:
@@ -13,6 +15,14 @@ You can directly install StratigraPy from pip:
 Or from GitHub using pip:
 
     pip install git+https://github.com/grongier/stratigrapy.git
+
+To run the Jupyter notebook in [examples](examples) you will also need tqdm, cmocean, pyvista, and jupyter, which you can install from pip too:
+
+    pip install tqdm cmocean pyvista jupyter
+
+You can also install everything using conda and the `environment.yml` file included in this repository:
+
+    conda env create -f environment.yml
 
 ## Usage
 

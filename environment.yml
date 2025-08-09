@@ -1,0 +1,16 @@
+name: stratigrapy
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python
+  - pip
+  - landlab
+  - tqdm
+  - cmocean
+  - pyvista
+  - jupyter
+  - pip:
+    - stratigrapy
