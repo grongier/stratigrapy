@@ -4,7 +4,7 @@ StratigraPy is a Python package for stratigraphic modeling based on [Landlab](ht
 
 StratigraPy is still experimental and under heavy development.
 
-[![Click to watch the video](https://img.youtube.com/vi/THp7vKp5ha4/0.jpg)](https://www.youtube.com/watch?v=THp7vKp5ha4)
+[![Click to watch the video](https://img.youtube.com/vi/THp7vKp5ha4/maxresdefault.jpg)](https://www.youtube.com/watch?v=THp7vKp5ha4)
 
 ## Installation
 
