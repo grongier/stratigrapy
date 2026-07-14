@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stratigrapy"
 version = "0.0.2"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{name = "Guillaume Rongier"}]
 description = "Python package for stratigraphic modeling based on Landlab"
 license = "MIT"
@@ -17,10 +17,12 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Development Status :: 4 - Beta",
     "Natural Language :: English",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Cython",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 dependencies = [
