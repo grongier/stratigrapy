@@ -42,6 +42,7 @@ def deposit_or_erode(
     long bottom_index,
     long top_index,
     const cython.floating [:, :] dz,
+    cython.floating [:] thickness_change,
 ):
     cdef int n_stacks = layers.shape[1]
     cdef int n_classes = layers.shape[2]
@@ -56,6 +57,7 @@ def deposit_or_erode(
             for cla in range(n_classes):
                 if dz[col, cla] >= 0.:
                     layers[top_index, col, cla] += dz[col, cla]
+                    thickness_change[col] += dz[col, cla]
                 else:
                     amount_to_remove = - dz[col, cla]
                     removed = 0.
@@ -64,7 +66,12 @@ def deposit_or_erode(
                         layers[layer, col, cla] = 0.
                         if removed > amount_to_remove:
                             layers[layer, col, cla] = removed - amount_to_remove
+                            removed = amount_to_remove
                             break
+                    # `removed` is the amount actually eroded, which is smaller
+                    # than the requested amount when the stack runs out of
+                    # sediments
+                    thickness_change[col] -= removed
 
 
 @cython.boundscheck(False)
@@ -102,6 +109,7 @@ def get_superficial_layer(
     const id_t [:] surface_index,
     const cython.floating [:] dz,
     cython.floating [:, :] superficial_layer,
+    unsigned char [:] exhausted,
 ):
     cdef int n_stacks = layers.shape[1]
     cdef int n_classes = layers.shape[2]
@@ -117,6 +125,10 @@ def get_superficial_layer(
         for col in range(n_stacks):
             superficial_layer_thickness = dz[col]
             thickness = 0.
+            # The stack is exhausted when the walk reaches its bottom without
+            # accumulating the requested thickness, i.e., the superficial layer
+            # includes all the available sediments
+            exhausted[col] = 1
             for layer in range(surface_index[col], bottom_index - 1, -1):
                 for cla in range(n_classes):
                     superficial_layer[col, cla] += layers[layer, col, cla]
@@ -128,6 +140,7 @@ def get_superficial_layer(
                     ratio = (thickness - superficial_layer_thickness)/layer_thickness
                     for cla in range(n_classes):
                         superficial_layer[col, cla] -= ratio*layers[layer, col, cla]
+                    exhausted[col] = 0
                     break
 
 
@@ -140,6 +153,7 @@ def get_active_layer(
     const id_t [:] surface_index,
     const cython.floating [:] dz,
     cython.floating [:, :] active_layer,
+    unsigned char [:] exhausted,
 ):
     cdef int n_stacks = layers.shape[1]
     cdef int n_classes = layers.shape[2]
@@ -155,6 +169,10 @@ def get_active_layer(
         for col in range(n_stacks):
             active_layer_thickness = dz[col]
             thickness = 0.
+            # The stack is exhausted when the walk reaches its bottom without
+            # accumulating the requested thickness, i.e., the active layer
+            # includes all the available sediments
+            exhausted[col] = 1
             for layer in range(surface_index[col], bottom_index - 1, -1):
                 for cla in range(n_classes):
                     active_layer[col, cla] += (1. - porosity[layer, col, cla])*layers[layer, col, cla]
@@ -166,4 +184,5 @@ def get_active_layer(
                     ratio = (thickness - active_layer_thickness)/layer_thickness
                     for cla in range(n_classes):
                         active_layer[col, cla] -= ratio*(1. - porosity[layer, col, cla])*layers[layer, col, cla]
+                    exhausted[col] = 0
                     break

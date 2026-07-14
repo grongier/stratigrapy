@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@ import numpy as np
 
 from .._base import _BaseMover
 from ...utils import convert_to_array
-
 
 ################################################################################
 # Component
@@ -92,7 +91,7 @@ class BedrockWeatherer(_BaseMover):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid, fields_to_track)
+        super().__init__(grid, fields_to_track=fields_to_track)
 
         # Parameters
         self.max_weathering_rate = max_weathering_rate

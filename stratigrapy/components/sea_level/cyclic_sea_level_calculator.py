@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@ import numpy as np
 from landlab import Component
 
 from ...utils import convert_to_array, match_array_lengths
-
 
 ################################################################################
 # Component
@@ -95,7 +94,7 @@ class CyclicSeaLevelCalculator(Component):
         """
         super().__init__(grid)
 
-        self._grid.at_grid["sea_level__elevation"] = 0.
+        self._grid.at_grid["sea_level__elevation"] = 0.0
         self.initialize_output_fields()
 
         # Parameters
@@ -135,6 +134,7 @@ class CyclicSeaLevelCalculator(Component):
             )
         self._grid.at_grid["sea_level__elevation"] = sea_level
 
+        self._bathymetry[:] = 0.0
         np.subtract(
             sea_level,
             self._topography,

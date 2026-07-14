@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,6 @@ from landlab import Component
 
 from ..utils import convert_to_array, format_fields_to_track
 
-
 ################################################################################
 # Base components
 
@@ -43,6 +42,10 @@ class _BaseHandler(Component):
     def __init__(
         self,
         grid,
+        substeps=None,
+        substep_fraction=0.3,
+        max_substeps=1000,
+        min_slope=1e-7,
         fields_to_track=None,
         **kwargs,
     ):
@@ -51,6 +54,27 @@ class _BaseHandler(Component):
         ----------
         grid : ModelGrid
             A grid.
+        substeps : None, int, or 'adaptive', optional
+            Controls how the imposed time step is subdivided when running the component:
+                - If None, the time step is used as is (no subdivision).
+                - If an integer, the time step is split into that fixed number of
+                  equal substeps, with the topography (but not the flow) updated
+                  between substeps.
+                - If 'adaptive', the time step is adaptively subdivided to keep
+                  the explicit scheme stable, following the approach of CHILD:
+                  a Courant criterion for hillslope diffusion and a time-to-flattening
+                  criterion for fluvial transport.
+        substep_fraction : float, optional
+            Fraction of the stability limit used as the substep, to stay comfortably
+            below it. Only used when `substeps` is 'adaptive'.
+        max_substeps : int, optional
+            Maximum number of substeps allowed within a single time step, which
+            guarantees termination and sets the smallest possible substep
+            (dt / max_substeps). Only used when `substeps` is 'adaptive'.
+        min_slope : float, optional
+            Slope below which a pair of nodes is ignored when estimating the
+            stable substep, to avoid vanishingly small substeps on near-flat
+            terrain. Only used when `substeps` is 'adaptive'.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -59,6 +83,10 @@ class _BaseHandler(Component):
 
         # Parameters
         self._fields_to_track = format_fields_to_track(fields_to_track)
+        self._substeps = 1 if substeps is None else substeps
+        self._substep_fraction = substep_fraction
+        self._max_substeps = max_substeps
+        self._min_slope = min_slope
 
         # Physical fields
         self._stratigraphy = grid.stacked_layers
@@ -118,7 +146,6 @@ class _BaseMover(_BaseHandler):
     def __init__(
         self,
         grid,
-        fields_to_track=None,
         **kwargs,
     ):
         """
@@ -126,25 +153,216 @@ class _BaseMover(_BaseHandler):
         ----------
         grid : ModelGrid
             A grid.
-        fields_to_track : str or array-like, optional
-            The name of the fields at grid nodes to add to the StackedLayers at
-            each iteration.
+        kwargs : dict, optional
+            Other input parameters of `_BaseHandler`.
         """
-        super().__init__(grid=grid, fields_to_track=fields_to_track, **kwargs)
+        super().__init__(grid=grid, **kwargs)
 
         # Physical fields
         self._topography = grid.at_node["topographic__elevation"]
 
-    def _update_physical_fields(self, dt, update_compatible=False, update=False):
+    def _calculate_sediment_thickness(self, dt):
         """
-        Applies the sediment fluxes to the topography and stratigraphy.
+        Calculates the sediment thickness change over the time step `dt` and
+        stores it in `_sediment_thickness`. Must be implemented by subclasses.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _calculate_sediment_thickness"
+        )
+
+    def _prepare_step(self):
+        """
+        Precomputes the quantities that stay constant across the substeps of a
+        single `run_one_step` and caches them on the component. The base
+        implementation does nothing; subclasses extend it (always calling
+        ``super()._prepare_step()`` first).
+        """
+        pass
+
+    def _max_stable_timestep_flattening(self, dt):
+        """
+        Estimates the largest stable time step based on the time it would take for
+        a pair of adjacent core nodes to reverse their slope, given the current
+        sediment thickness change over `dt`. Returns infinity when no pair of
+        nodes is converging, in which case the remaining time can be used at once.
+        """
+        grid = self._grid
+        links = grid.active_links
+        head = grid.node_at_link_head[links]
+        tail = grid.node_at_link_tail[links]
+
+        z = self._topography
+        rate = np.sum(self._sediment_thickness, axis=1) / dt
+
+        head_is_higher = z[head] >= z[tail]
+        node_hi = np.where(head_is_higher, head, tail)
+        node_lo = np.where(head_is_higher, tail, head)
+
+        rate_diff = rate[node_lo] - rate[node_hi]
+        elevation_diff = z[node_hi] - z[node_lo]
+        slope = elevation_diff / grid.length_of_link[links]
+        converging = (rate_diff > 0.0) & (slope > self._min_slope)
+        if not np.any(converging):
+            return np.inf
+
+        return self._substep_fraction * np.min(
+            elevation_diff[converging] / rate_diff[converging]
+        )
+
+    def _max_stable_timestep_courant_at_links(self, dt):
+        """
+        Estimates the largest stable time step from the Courant condition
+        ``dt <= length**2 / (2 * D)``, evaluated element-wise and minimized over
+        the grid. The effective diffusivity is recovered from the sediment flux
+        and slope at each active link, so it accounts for the slope exponent and
+        active-layer composition.
+        """
+        links = self._grid.active_links
+        link_lengths = self._grid.length_of_link[links]
+
+        flux = np.abs(np.sum(self._sediment_flux_at_links[links], axis=1))
+        slope = np.abs(self._slope_at_links[links, 0])
+        effective_diffusivity = np.zeros_like(slope)
+        np.divide(flux, slope, out=effective_diffusivity, where=slope > self._min_slope)
+
+        stable = np.full(effective_diffusivity.shape, np.inf)
+        np.divide(
+            link_lengths * link_lengths,
+            2.0 * effective_diffusivity,
+            out=stable,
+            where=effective_diffusivity > 0.0,
+        )
+
+        return self._substep_fraction * np.min(stable)
+
+    def _max_stable_timestep_courant_at_nodes(self, dt):
+        """
+        Estimates the largest stable time step from the Courant condition
+        ``dt <= length**2 / (2 * D)`` like `_max_stable_timestep_courant_at_links`,
+        but with the effective diffusivity recovered from the node-to-neighbor
+        outfluxes of a routing scheme. For each pair of nodes,
+        ``D = outflux * length / (cell_area * slope)``, so the criterion becomes
+        ``dt <= slope * length * cell_area / (2 * outflux)``. This accounts for
+        the slope exponent, the active-layer composition, and the non-linear
+        amplification near the critical slope.
+        """
+        slope = self._slope[..., 0]
+        outflux = np.sum(self._sediment_outflux, axis=2)
+        lengths = self._link_lengths[self._links_to_neighbors]
+        cell_area = self._grid.cell_area_at_node[:, np.newaxis]
+
+        stable = np.full(slope.shape, np.inf)
+        np.divide(
+            slope * lengths * cell_area,
+            2.0 * outflux,
+            out=stable,
+            where=(outflux > 0.0) & (slope > self._min_slope),
+        )
+
+        return self._substep_fraction * np.min(stable)
+
+    def _max_stable_timestep(self, dt):
+        """
+        Estimates the largest stable time step for the adaptive substepping.
+        Defaults to the time-to-flattening criterion, which only relies on the
+        topography and the sediment thickness change; subclasses override this
+        to select the criterion suited to their scheme.
+        """
+        return self._max_stable_timestep_flattening(dt)
+
+    def _update_slope(self):
+        """
+        Refreshes the slope from the current topography between substeps. By
+        default this is a no-op (components that derive the slope from the
+        topography on the fly need nothing here); subclasses that read a slope set
+        externally (e.g. by a flow accumulator) override this to keep the slope
+        consistent with the evolving topography, while leaving the flow directions
+        and discharge unchanged.
+        """
+        pass
+
+    def _apply_substep(
+        self, dt, accumulated_thickness, update_compatible=False, update=False
+    ):
+        """
+        Applies the current sediment thickness to the topography and the
+        stratigraphy, accumulates it for bookkeeping, and refreshes the slope.
         """
         core_nodes = self._grid.core_nodes
 
-        self._update_stratigraphy(dt, update_compatible, update)
         self._topography[core_nodes] += np.sum(
             self._sediment_thickness[core_nodes], axis=1
         )
+        accumulated_thickness[core_nodes] += self._sediment_thickness[core_nodes]
+        self._update_stratigraphy(dt, update_compatible, update)
+        self._update_slope()
+
+    def _run(self, dt, update_compatible=False, update=False):
+        """
+        Runs the component over the time step `dt`, optionally subdividing it
+        according to `substeps`, and applies the resulting sediment
+        fluxes to the topography and stratigraphy. The topography, slope, and
+        stratigraphy are updated at every substep (but not the flow directions or
+        discharge). Only the first substep honors the caller's layer flags; the
+        remaining substeps deposit into that same layer (`update=True`), so that a
+        single consolidated layer is still produced per `run_one_step`.
+        """
+        core_nodes = self._grid.core_nodes
+
+        self._prepare_step()
+
+        accumulated_thickness = np.zeros_like(self._sediment_thickness)
+
+        if isinstance(self._substeps, int):
+            sub_dt = dt / self._substeps
+            for substep in range(self._substeps):
+                self._calculate_sediment_thickness(sub_dt)
+                if substep == 0:
+                    self._apply_substep(
+                        sub_dt, accumulated_thickness, update_compatible, update
+                    )
+                else:
+                    self._apply_substep(sub_dt, accumulated_thickness, update=True)
+        else:  # 'adaptive'
+            remaining = dt
+            floor = dt / self._max_substeps
+            for step in range(self._max_substeps):
+                self._calculate_sediment_thickness(remaining)
+                if step < self._max_substeps - 1:
+                    sub_dt = min(
+                        max(self._max_stable_timestep(remaining), floor), remaining
+                    )
+                else:
+                    sub_dt = remaining
+                self._sediment_thickness *= sub_dt / remaining
+                if step == 0:
+                    self._apply_substep(
+                        sub_dt, accumulated_thickness, update_compatible, update
+                    )
+                else:
+                    self._apply_substep(sub_dt, accumulated_thickness, update=True)
+                remaining -= sub_dt
+                if remaining <= 0.0:
+                    break
+
+        self._sediment_thickness[core_nodes] = accumulated_thickness[core_nodes]
+
+    def run_one_step(self, dt, update_compatible=False, update=False):
+        """Run the component for one timestep, dt.
+
+        Parameters
+        ----------
+        dt : float (time)
+            The imposed timestep.
+        update_compatible : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer at the top of the stack only
+            if the new layer is compatible with the existing layer.
+        update : bool, optional
+            If False, create a new layer and deposit in that layer; otherwise,
+            deposition occurs in the existing layer.
+        """
+        self._run(dt, update_compatible, update)
 
 
 ################################################################################
@@ -190,7 +408,6 @@ class _BaseDiffuser(_BaseMover):
         max_erosion_rate_br=0.01,
         active_layer_rate_br=None,
         exponent_slope=1.0,
-        fields_to_track=None,
         **kwargs,
     ):
         """
@@ -233,17 +450,21 @@ class _BaseDiffuser(_BaseMover):
             default, it is set by the maximum erosion rate of the bedrock.
         exponent_slope : float (-)
             The exponent for the slope.
-        fields_to_track : str or array-like, optional
-            The name of the fields at grid nodes to add to the StackedLayers at
-            each iteration.
+        kwargs : dict, optional
+            Other input parameters of `_BaseMover`.
         """
-        super().__init__(grid=grid, fields_to_track=fields_to_track, **kwargs)
+        super().__init__(grid=grid, **kwargs)
 
         # Parameters
         self._K_cont = convert_to_array(diffusivity_cont)
         self._K_mar = convert_to_array(diffusivity_mar)
         self.wave_base = wave_base
-        self._porosity = convert_to_array(porosity)
+        self._porosity = np.ascontiguousarray(
+            np.broadcast_to(
+                convert_to_array(porosity), self._stratigraphy.number_of_classes
+            ),
+            dtype=float,
+        )
         self._max_erosion_rate_sed = (
             np.inf if max_erosion_rate_sed is None else max_erosion_rate_sed
         )
@@ -271,7 +492,18 @@ class _BaseDiffuser(_BaseMover):
         self._active_layer = np.zeros((n_nodes, 1, n_sediments))
         self._active_layer_thickness = np.zeros((n_nodes, 1, 1))
         self._active_layer_composition = np.zeros((n_nodes, 1, n_sediments))
-        self._total_layer_thickness = np.zeros((n_nodes, 1, 1))
+        # Nodes whose stack is fully included in the active layer, i.e., where
+        # the bedrock is exposed
+        self._stack_exhausted = np.ones((n_nodes, 1, 1), dtype=bool)
+
+    def _prepare_step(self):
+        """
+        Precomputes the substep-invariant quantities for the diffusion models.
+        The sediment diffusivity depends only on the bathymetry, which is frozen
+        between substeps, so it is computed once per step here.
+        """
+        super()._prepare_step()
+        self._calculate_sediment_diffusivity()
 
     def _calculate_sediment_diffusivity(self):
         """
@@ -292,17 +524,18 @@ class _BaseDiffuser(_BaseMover):
             if "sediment__porosity" in self._stratigraphy._attrs
             else self._porosity
         )
-        self._active_layer[self._grid.core_nodes, 0] = (
-            self._stratigraphy.get_active_layer(max_thickness_sed, porosity)
-        )
         if max_thickness_br > 0.0:
+            active_layer, exhausted = self._stratigraphy.get_active_layer(
+                max_thickness_sed, porosity, return_exhausted=True
+            )
+            self._active_layer[self._grid.core_nodes, 0] = active_layer
             self._active_layer_thickness[:] = np.sum(
                 self._active_layer, axis=2, keepdims=True
             )
-            # TODO: This seems to really slow things down
-            self._total_layer_thickness[self._grid.core_nodes, 0, 0] = (
-                self._stratigraphy.get_thickness(porosity)
-            )
+            # The bedrock contributes to the active layer where it is exposed,
+            # i.e., where the active layer already includes all the sediments
+            # of the stack
+            self._stack_exhausted[self._grid.core_nodes, 0, 0] = exhausted
             np.add(
                 self._active_layer,
                 self._bedrock_composition
@@ -311,14 +544,15 @@ class _BaseDiffuser(_BaseMover):
                     - self._active_layer_thickness
                 ),
                 out=self._active_layer,
-                where=(
-                    np.abs(self._active_layer_thickness - self._total_layer_thickness)
-                    < 1e-10
-                )
+                where=self._stack_exhausted
                 & (
                     self._active_layer_thickness
                     < (1.0 - self._porosity) * max_thickness_br
                 ),
+            )
+        else:
+            self._active_layer[self._grid.core_nodes, 0] = (
+                self._stratigraphy.get_active_layer(max_thickness_sed, porosity)
             )
 
     def _calculate_active_layer_composition(self, dt):
@@ -340,6 +574,13 @@ class _BaseDiffuser(_BaseMover):
             out=self._active_layer_composition,
             where=self._active_layer_thickness > 0.0,
         )
+
+    def _max_stable_timestep(self, dt):
+        """
+        Selects the link-based Courant criterion, matching the link-based
+        finite-volume scheme of the diffusers.
+        """
+        return self._max_stable_timestep_courant_at_links(dt)
 
 
 class _BaseStreamPower(_BaseDiffuser):
@@ -442,7 +683,6 @@ class _BaseStreamPower(_BaseDiffuser):
         exponent_discharge=1.0,
         exponent_slope=1.0,
         ref_water_flux=None,
-        fields_to_track=None,
         **kwargs,
     ):
         """
@@ -494,9 +734,8 @@ class _BaseStreamPower(_BaseDiffuser):
             The reference water flux by which the water discharge is normalized.
             If a float, that value is used at each time step; if 'max', the
             maximum value of discharge at each time step is used.
-        fields_to_track : str or array-like, optional
-            The name of the fields at grid nodes to add to the StackedLayers at
-            each iteration.
+        kwargs : dict, optional
+            Other input parameters of `_BaseDiffuser`.
         """
         super().__init__(
             grid,
@@ -510,7 +749,7 @@ class _BaseStreamPower(_BaseDiffuser):
             max_erosion_rate_br,
             active_layer_rate_br,
             exponent_slope,
-            fields_to_track,
+            **kwargs,
         )
 
         # Parameters
@@ -535,11 +774,16 @@ class _BaseStreamPower(_BaseDiffuser):
             self._flow_proportions = grid.at_node["flow__receiver_proportions"][
                 ..., np.newaxis
             ]
+            if self._flow_proportions.ndim == 2:
+                self._flow_proportions = self._flow_proportions[..., np.newaxis]
         else:
             self._flow_proportions = np.ones((n_nodes, n_receivers, 1))
-        self._water_flux = grid.at_node["surface_water__discharge"][
-            :, np.newaxis, np.newaxis
-        ]
+        self._discharge = grid.at_node["surface_water__discharge"]
+        self._water_flux = np.zeros((n_nodes, 1, 1))
+        self._water_flux_term = np.zeros((n_nodes, n_receivers, 1))
+        self._distance_to_receiver = np.zeros((n_nodes, n_receivers))
+        self._has_receiver = np.zeros((n_nodes, n_receivers), dtype=bool)
+        self._elevation_drop = np.zeros((n_nodes, n_receivers))
 
         # Fields for sediment fluxes
         n_sediments = self._stratigraphy.number_of_classes
@@ -552,14 +796,81 @@ class _BaseStreamPower(_BaseDiffuser):
         self._critical_rate = np.zeros((n_nodes, 1, n_sediments))
         self._ratio_critical_outflux = np.zeros((n_nodes, n_receivers, n_sediments))
 
+    def _prepare_step(self):
+        """
+        Precomputes the substep-invariant quantities for the stream power models:
+        the normalized water flux, the discharge term of the stream power law,
+        and the distance to the flow receivers, all of which depend only on the
+        (frozen) flow network and discharge.
+        """
+        super()._prepare_step()
+        self._normalize_water_flux()
+        self._update_water_flux_term()
+        self._update_receiver_distances()
+
+    def _update_receiver_distances(self):
+        """
+        Updates the distance to the (fixed) flow receivers, used to derive the
+        slope from the topography between substeps.
+        """
+        receivers = self._flow_receivers[..., 0]
+        np.hypot(
+            self._grid.x_of_node[receivers] - self._grid.x_of_node[:, np.newaxis],
+            self._grid.y_of_node[receivers] - self._grid.y_of_node[:, np.newaxis],
+            out=self._distance_to_receiver,
+        )
+        np.not_equal(self._distance_to_receiver, 0.0, out=self._has_receiver)
+
+    def _update_water_flux_term(self):
+        """
+        Updates the discharge term ``(water_flux * flow_proportions) ** m`` of the
+        stream power law from the current (normalized) water flux.
+        """
+        np.power(
+            self._water_flux * self._flow_proportions,
+            self._m,
+            out=self._water_flux_term,
+        )
+
     def _normalize_water_flux(self):
         """
-        Normalizes the water flux if needed.
+        Refreshes the private water-flux buffer from the grid discharge field and
+        normalizes it if needed. The grid field itself is never modified.
         """
+        self._water_flux[:, 0, 0] = self._discharge
         if self.ref_water_flux == "max":
-            self._water_flux[:] /= np.max(self._water_flux)
+            max_flux = np.max(self._water_flux)
+            if max_flux > 0.0:
+                self._water_flux[:] /= max_flux
         elif isinstance(self.ref_water_flux, (int, float)):
             self._water_flux[:] /= self.ref_water_flux
+
+    def _max_stable_timestep(self, dt):
+        """
+        Selects the time-to-flattening criterion for fluvial transport,
+        following CHILD, instead of the link-based Courant criterion inherited
+        from `_BaseDiffuser`.
+        """
+        return self._max_stable_timestep_flattening(dt)
+
+    def _update_slope(self):
+        """
+        Recomputes the steepest slope along the (fixed) flow receivers from the
+        current topography, reusing the distances precomputed in `_prepare_step`.
+        """
+        receivers = self._flow_receivers[..., 0]
+        z = self._topography
+        np.subtract(z[:, np.newaxis], z[receivers], out=self._elevation_drop)
+
+        slope = self._slope[..., 0]
+        slope[...] = 0.0
+        np.divide(
+            self._elevation_drop,
+            self._distance_to_receiver,
+            out=slope,
+            where=self._has_receiver,
+        )
+        np.clip(slope, 0.0, None, out=slope)
 
 
 ################################################################################
@@ -589,7 +900,6 @@ class _BaseRouter(_BaseMover):
         grid,
         number_of_neighbors=1,
         porosity=0.0,
-        fields_to_track=None,
         **kwargs,
     ):
         """
@@ -603,14 +913,18 @@ class _BaseRouter(_BaseMover):
         porosity : float or array-like (-)
             The porosity of the sediments at the time of deposition for one or
             multiple lithologies.
-        fields_to_track : str or array-like, optional
-            The name of the fields at grid nodes to add to the StackedLayers at
-            each iteration.
+        kwargs : dict, optional
+            Other input parameters of `_BaseMover`.
         """
-        super().__init__(grid=grid, fields_to_track=fields_to_track, **kwargs)
+        super().__init__(grid=grid, **kwargs)
 
         # Parameters
-        self._porosity = convert_to_array(porosity)
+        self._porosity = np.ascontiguousarray(
+            np.broadcast_to(
+                convert_to_array(porosity), self._stratigraphy.number_of_classes
+            ),
+            dtype=float,
+        )
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
@@ -619,9 +933,10 @@ class _BaseRouter(_BaseMover):
         self._sediment_outflux = np.zeros((n_nodes, number_of_neighbors, n_sediments))
         self._max_sediment_outflux = np.zeros((n_nodes, n_sediments))
 
-    def _apply_fluxes(self, dt, update_compatible=False, update=False):
+    def _convert_fluxes_to_thickness(self, dt):
         """
-        Applies the sediment fluxes to the topography and stratigraphy.
+        Converts the sediment in- and outfluxes into a sediment thickness change
+        over the time step `dt`, stored in `_sediment_thickness`.
         """
         core_nodes = self._grid.core_nodes
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
@@ -635,4 +950,3 @@ class _BaseRouter(_BaseMover):
             / (1.0 - self._porosity)
             / cell_area[core_nodes]
         )
-        self._update_physical_fields(dt, update_compatible, update)

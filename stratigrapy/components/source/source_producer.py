@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,6 @@ import numpy as np
 from scipy.spatial import KDTree
 from scipy.interpolate import CubicSpline, PchipInterpolator, make_interp_spline
 from landlab import Component
-
 
 ################################################################################
 # Component
@@ -88,9 +87,12 @@ class SourceProducer(Component):
             The water influx at each control point for each source.
         sediment_source_time : array of shape (n_source, n_time) or (n_time,)
             The time at each control point for each source for the sediment influx.
-        sediment_source_influx : array of shape (n_source, n_time, n_class), (n_time, n_class), or (n_time,)
+        sediment_source_influx : array of shape (n_source, n_time, n_class), (n_source, n_time), (n_time, n_class), or (n_time,)
             The sediment influx at each control point for each source and each
-            sediment class.
+            sediment class. A 2D array is read as (n_source, n_time) when its
+            shape matches the number of sources and control points, and as
+            (n_time, n_class) otherwise (the influx is then the same for every
+            source).
         interpolation : str
             The interpolation method, which can be:
                 - 'linear' for linear interpolation (the default).
@@ -112,14 +114,29 @@ class SourceProducer(Component):
             water_source_time = np.broadcast_to(
                 water_source_time, water_source_influx.shape
             )
+        sediment_source_time = np.asarray(sediment_source_time)
+        n_times = sediment_source_time.shape[-1]
         sediment_source_influx = np.asarray(sediment_source_influx)
         if sediment_source_influx.ndim == 1:
+            # (n_time,): a single class, same influx for every source
             sediment_source_influx = np.tile(
                 sediment_source_influx, (len(source_xy), 1)
-            )
-        if sediment_source_influx.ndim == 2:
-            sediment_source_influx = sediment_source_influx[..., np.newaxis]
-        sediment_source_time = np.asarray(sediment_source_time)
+            )[..., np.newaxis]
+        elif sediment_source_influx.ndim == 2:
+            if sediment_source_influx.shape == (len(source_xy), n_times):
+                # (n_source, n_time): a single class
+                sediment_source_influx = sediment_source_influx[..., np.newaxis]
+            elif sediment_source_influx.shape[0] == n_times:
+                # (n_time, n_class): same influx for every source
+                sediment_source_influx = np.tile(
+                    sediment_source_influx, (len(source_xy), 1, 1)
+                )
+            else:
+                raise ValueError(
+                    f"sediment_source_influx has shape {sediment_source_influx.shape},"
+                    f" which matches neither (n_source, n_time) ({len(source_xy)},"
+                    f" {n_times}) nor (n_time, n_class) with n_time {n_times}"
+                )
         if sediment_source_time.ndim == 1:
             sediment_source_time = np.tile(sediment_source_time, (len(source_xy), 1))
         self._time = 0.0
@@ -145,7 +162,7 @@ class SourceProducer(Component):
         # Source location in the grid
         kdtree = KDTree(grid.xy_of_cell)
         _, self._source_idx = kdtree.query(source_xy)
-        self._source_idx = grid.core_nodes[self._source_idx]
+        self._source_idx = grid.node_at_cell[self._source_idx]
 
         # Interpolators
         self._water_interpolators = []
@@ -192,11 +209,11 @@ class SourceProducer(Component):
         self._water_influx[self._source_idx] = 0.0
         for i, interpolator in enumerate(self._water_interpolators):
             value = interpolator(self._time)
-            if value > 0.:
+            if value > 0.0:
                 self._water_influx[self._source_idx[i]] += value
         self._sediment_influx[self._source_idx] = 0.0
         for i, interpolators in enumerate(self._sediment_interpolators):
             for j, interpolator in enumerate(interpolators):
                 value = interpolator(self._time)
-                if value > 0.:
+                if value > 0.0:
                     self._sediment_influx[self._source_idx[i], j] += value

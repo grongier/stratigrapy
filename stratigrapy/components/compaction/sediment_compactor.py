@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,7 @@ import numpy as np
 from landlab import Component
 
 from ...utils import convert_to_array, format_fields_to_track
-
+from .cfuncs import compact
 
 ################################################################################
 # Component
@@ -35,8 +35,6 @@ from ...utils import convert_to_array, format_fields_to_track
 
 class SedimentCompactor(Component):
     """Compaction of sediments in a StackedLayers.
-
-    Warning: This component is slow, especially when the number of layers increases.
 
     References
     ----------
@@ -112,27 +110,22 @@ class SedimentCompactor(Component):
         self._topography = grid.at_node["topographic__elevation"]
         self._stratigraphy = grid.stacked_layers
 
-        # Fields for compaction
-        self._initial_thickness = np.zeros(self._stratigraphy.number_of_stacks)
-
     def run_one_step(self):
         """Run the compactor for one timestep."""
         core_nodes = self._grid.core_nodes
 
-        self._initial_thickness[:] = self._stratigraphy.thickness
-
-        _depth = self._stratigraphy.z[..., np.newaxis]  # This is awfully slow
-        _depth[1:] = _depth[1:] - (_depth[1:] - _depth[:-1]) / 2.0
-        _depth[0] /= 2.0
-        porosity = self.initial_porosity * np.exp(
-            -_depth / self.efolding_thickness
-        )  # This is awfully slow
-        porosity = np.minimum(self._stratigraphy["sediment__porosity"], porosity)
-
-        self._stratigraphy["_dz"][:] *= (
-            1.0 - self._stratigraphy["sediment__porosity"]
-        ) / (1.0 - porosity)
-        self._stratigraphy["sediment__porosity"][:] = porosity
-        self._topography[core_nodes] -= (
-            self._initial_thickness - self._stratigraphy.thickness
+        dz = self._stratigraphy.dz
+        porosity = self._stratigraphy["sediment__porosity"]
+        n_classes = dz.shape[2]
+        initial_porosity = np.ascontiguousarray(
+            np.broadcast_to(self.initial_porosity, n_classes), dtype=float
         )
+        efolding_thickness = np.ascontiguousarray(
+            np.broadcast_to(self.efolding_thickness, n_classes), dtype=float
+        )
+        thickness_change = np.empty(self._stratigraphy.number_of_stacks, dtype=float)
+
+        compact(dz, porosity, initial_porosity, efolding_thickness, thickness_change)
+
+        self._stratigraphy._thickness += thickness_change
+        self._topography[core_nodes] += thickness_change

@@ -34,7 +34,6 @@ from landlab import HexModelGrid as _HexModelGrid
 from ..layers import StackedLayersMixIn
 from ..plot.layers import RasterModelGridLayerPlotterMixIn
 
-
 ################################################################################
 # Adding member function (from Landlab)
 
@@ -55,7 +54,7 @@ def add_module_functions_to_class(cls, module, pattern=None, exclude=None):
 
     *Note* if both pattern and exclude are provided both conditions must be met.
     """
-    (module, _) = os.path.splitext(os.path.basename(module))
+    module, _ = os.path.splitext(os.path.basename(module))
 
     mod = importlib.import_module("." + module, package="stratigrapy.grid")
 
@@ -83,7 +82,7 @@ class RasterModelGrid(
         bc=None,
         number_of_classes=1,
         initial_allocation=1,
-        new_allocation=1,
+        new_allocation="geometric",
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
         fuse_continuously=True,
@@ -122,10 +121,13 @@ class RasterModelGrid(
             If an int, the layers are pre-allocated at the end; it an array-like,
             the first element corresponds to layers pre-allocated at the start,
             the second to layers pre-allocated at the end.
-        new_allocation : int or array-like, optional
+        new_allocation : int, str, or array-like, optional
             Number of layers pre-allocated when adding new layers to speed up the
-            process. If an array-like, different number of layers are pre-allocated
-            at the start and at the end of the stacks.
+            process. If 'geometric' (the default), the number of pre-allocated
+            layers grows with the number of layers in the stacks, which keeps the
+            cost of adding layers amortized constant. If an array-like, different
+            numbers of layers (or 'geometric') are pre-allocated at the start and
+            at the end of the stacks.
         number_of_layers_to_fuse : int, optional
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional
@@ -191,7 +193,7 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
         xy_axis_units="-",
         number_of_classes=1,
         initial_allocation=1,
-        new_allocation=1,
+        new_allocation="geometric",
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
         fuse_continuously=True,
@@ -221,10 +223,13 @@ class VoronoiDelaunayGrid(StackedLayersMixIn, _VoronoiDelaunayGrid):
             If an int, the layers are pre-allocated at the end; it an array-like,
             the first element corresponds to layers pre-allocated at the start,
             the second to layers pre-allocated at the end.
-        new_allocation : int or array-like, optional
+        new_allocation : int, str, or array-like, optional
             Number of layers pre-allocated when adding new layers to speed up the
-            process. If an array-like, different number of layers are pre-allocated
-            at the start and at the end of the stacks.
+            process. If 'geometric' (the default), the number of pre-allocated
+            layers grows with the number of layers in the stacks, which keeps the
+            cost of adding layers amortized constant. If an array-like, different
+            numbers of layers (or 'geometric') are pre-allocated at the start and
+            at the end of the stacks.
         number_of_layers_to_fuse : int, optional
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional
@@ -283,7 +288,7 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
         xy_axis_units="-",
         number_of_classes=1,
         initial_allocation=1,
-        new_allocation=1,
+        new_allocation="geometric",
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
         fuse_continuously=True,
@@ -334,10 +339,13 @@ class FramedVoronoiGrid(StackedLayersMixIn, _FramedVoronoiGrid):
             If an int, the layers are pre-allocated at the end; it an array-like,
             the first element corresponds to layers pre-allocated at the start,
             the second to layers pre-allocated at the end.
-        new_allocation : int or array-like, optional
+        new_allocation : int, str, or array-like, optional
             Number of layers pre-allocated when adding new layers to speed up the
-            process. If an array-like, different number of layers are pre-allocated
-            at the start and at the end of the stacks.
+            process. If 'geometric' (the default), the number of pre-allocated
+            layers grows with the number of layers in the stacks, which keeps the
+            cost of adding layers amortized constant. If an array-like, different
+            numbers of layers (or 'geometric') are pre-allocated at the start and
+            at the end of the stacks.
         number_of_layers_to_fuse : int, optional
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional
@@ -406,7 +414,7 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
         xy_axis_units="-",
         number_of_classes=1,
         initial_allocation=1,
-        new_allocation=1,
+        new_allocation="geometric",
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
         fuse_continuously=True,
@@ -447,10 +455,13 @@ class HexModelGrid(StackedLayersMixIn, _HexModelGrid):
             If an int, the layers are pre-allocated at the end; it an array-like,
             the first element corresponds to layers pre-allocated at the start,
             the second to layers pre-allocated at the end.
-        new_allocation : int or array-like, optional
+        new_allocation : int, str, or array-like, optional
             Number of layers pre-allocated when adding new layers to speed up the
-            process. If an array-like, different number of layers are pre-allocated
-            at the start and at the end of the stacks.
+            process. If 'geometric' (the default), the number of pre-allocated
+            layers grows with the number of layers in the stacks, which keeps the
+            cost of adding layers amortized constant. If an array-like, different
+            numbers of layers (or 'geometric') are pre-allocated at the start and
+            at the end of the stacks.
         number_of_layers_to_fuse : int, optional
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional

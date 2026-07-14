@@ -74,6 +74,11 @@ cpdef void calculate_flux_limiter(
             for j in range(n_neighbors):
                 link = links_to_neighbors[node, j]
                 neighbor = neighbors[node, j]
+                # Missing links and inactive neighbors are marked -1, which
+                # would read out of bounds with wraparound turned off (inactive
+                # links carry no flux anyway)
+                if link == -1 or neighbor == -1:
+                    continue
                 outflux = sediment_flux_at_links[link, k]*link_dirs_at_node[node, j]
                 if outflux <= 0.:
                     total_outflux -= outflux

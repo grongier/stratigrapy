@@ -1,8 +1,8 @@
-"""Flux-driven router"""
+"""Stress-driven router"""
 
 # MIT License
 
-# Copyright (c) 2025-2026 Guillaume Rongier
+# Copyright (c) 2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -26,38 +26,31 @@
 import numpy as np
 
 from .._base import _BaseRouter, _BaseStreamPower
+from .cfuncs import calculate_sediment_influx
 from ...utils import convert_to_array
-from .cfuncs import calculate_sediment_fluxes
 
 ################################################################################
 # Component
 
 
-class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
-    """SPACE model for erosion and transport of a Landlab field in continental
-    and marine domains.
+class StressDrivenRouter(_BaseRouter, _BaseStreamPower):
+    """Water-driven diffusion of a Landlab field in continental and marine domains
+    based on a routing scheme and a Meyer-Peter-Mueller-like transport formula.
 
-    This is a simple implementation that doesn't include all the elements of the
-    original Landlab component. In particular, this component updates the
-    stratigraphy based on the difference between sediment influx and outflux,
-    and not based on erosion and deposition like SPACE.
-
-    TODO: Properly adapt to the marine domain. For now the erosion coefficient
-    follows Granjeon (1996) and decreases as the bathymetry increases; the
-    settling velocity follows a similar approach to force deposition in the
-    marine domain.
+    This component was developed to compare the results of StratigraPy to those
+    of CHILD, but has not been thoroughly tested.
 
     References
     ----------
-    Shobe, C. M., Tucker, G. E., & Barnhart, K. R. (2017)
-        The SPACE 1.0 model: A Landlab component for 2-D calculation of sediment transport, bedrock erosion, and landscape evolution
-        https://doi.org/10.5194/gmd-10-4577-2017
+    Tucker, G. E. (2014)
+        CHILD Users Guide for version R10.7
+        https://github.com/childmodel/child/blob/master/Child/Docs/child_users_guide.pdf
     Granjeon, D. (1996)
         Modélisation stratigraphique déterministe: Conception et applications d'un modèle diffusif 3D multilithologique
         https://theses.hal.science/tel-00648827
     """
 
-    _name = "FluxDrivenRouter"
+    _name = "StressDrivenRouter"
 
     _info = {
         "flow__upstream_node_order": {
@@ -137,24 +130,29 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
     def __init__(
         self,
         grid,
-        erodibility_sed_cont=1e-10,
-        erodibility_sed_mar=1e-10,
+        transportability_cont=1e-5,
+        transportability_mar=1e-6,
+        shear_coefficient=1000.0,
+        roughness=0.05,
+        sediment_diameter=0.0005,
         wave_base=20.0,
-        settling_velocity=1.0,
-        critical_flux_sed=0.0,
-        critical_thickness=0.1,
         porosity=0.0,
         max_erosion_rate_sed=1e-2,
         active_layer_rate_sed=None,
-        erodibility_br_cont=1e-10,
-        erodibility_br_mar=1e-10,
         bedrock_composition=1.0,
-        critical_flux_br=0.0,
-        exponent_discharge=0.5,
-        exponent_slope=1.0,
+        max_erosion_rate_br=1e-2,
+        active_layer_rate_br=None,
+        exponent_discharge=0.66667,
+        exponent_slope=0.66667,
+        exponent_shear=1.5,
+        exponent_hiding=0.75,
+        critical_shields_stress=0.045,
+        sediment_density=2650.0,
+        water_density=1000.0,
+        gravitational_acceleration=9.81,
         ref_water_flux=None,
         substeps=None,
-        substep_fraction=0.3,
+        time_step_fraction=0.3,
         max_substeps=1000,
         min_slope=1e-7,
         fields_to_track=None,
@@ -164,21 +162,23 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         ----------
         grid : ModelGrid
             A grid.
-        erodibility_sed_cont : float or array-like (m/time)
-            The erodibility of the sediments over the continental domain for one
+        transportability_cont : float or array-like (m/time)
+            The transportability of the sediments over the continental domain
+            for one or multiple lithologies.
+        transportability_mar : float or array-like (m/time)
+            The transportability of the sediments over the marine domain for one
             or multiple lithologies.
-        erodibility_sed_mar : float or array-like (m/time)
-            The erodibility of the sediments over the marine domain for one or
-            multiple lithologies.
+        shear_coefficient : float or array-like
+            The coeﬃcient relating shear stress to discharge and slope. If None,
+            it is calculated from `water_density`, `gravitational_acceleration`,
+            and `roughness`.
+        roughness : float or array-like (-), optional
+            A dimensionless friction factor, only used when `shear_coefficient`
+            is None (see Tucker & Slingerland, 1997, https://doi.org/10.1029/97WR00409).
+        sediment_diameter : float or array-like (m)
+            The diameter of the sediments for one or multiple lithologies.
         wave_base : float (m)
             The wave base, below which weathering decreases exponentially.
-        settling_velocity : float or array-like (m/time)
-            The effective settling velocity for one or multiple lithologies.
-        critical_flux_sed : float or array-like (m3/time)
-            Critical sediment flux to start displace sediments in the stream
-            power law.
-        critical_thickness : float (m)
-            Sediment thickness required for full entrainment.
         porosity : float or array-like (-)
             The porosity of the sediments at the time of deposition for one or
             multiple lithologies. When computing the active layer, this porosity
@@ -193,20 +193,34 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
             The rate of formation of the active layer for sediments, which is used
             to determine the composition of the transported sediments. By default,
             it is set by the maximum erosion rate of the sediments.
-        erodibility_br_cont : float (m/time)
-            The erodibility of the berock over the continental domain.
-        erodibility_br_mar : float (m/time)
-            The erodibility of the berock over the marine domain.
         bedrock_composition : float or array-like (-)
             The composition of the material is added to the StackedLayers from
             the bedrock.
-        critical_flux_br : float or array-like (m3/time)
-            Critical sediment flux to start erode the bedrock in the stream
-            power law.
+        max_erosion_rate_br : float (m/time)
+            The maximum erosion rate of the bedrock. The erosion rate defines the
+            thickness of the active layer of the bedrock if `active_layer_rate_br`
+            is None.
+        active_layer_rate_br : float (m/time), optional
+            The rate of formation of the active layer for the bedrock, which is
+            used to determine the composition of the transported sediments. By
+            default, it is set by the maximum erosion rate of the bedrock.
         exponent_discharge : float (-)
             The exponent for the water discharge.
         exponent_slope : float (-)
             The exponent for the slope.
+        exponent_shear : float (-)
+            The exponent for the excess shear.
+        exponent_hiding : float (-)
+            The exponent for correcting the critical shear stress for protusion
+            and hiding.
+        critical_shields_stress : float
+            The critical Shields stress.
+        sediment_density : float (kg/m3)
+            The density of the sediments for one or multiple lithologies.
+        water_density : float (kg/m3)
+            The density of the water.
+        gravitational_acceleration : float (m/time2)
+            The gravitational acceleration.
         ref_water_flux : float or string (m3/time), optional
             The reference water flux by which the water discharge is normalized.
             If a float, that value is used at each time step; if 'max', the
@@ -242,164 +256,109 @@ class FluxDrivenRouter(_BaseRouter, _BaseStreamPower):
         super().__init__(
             grid=grid,
             number_of_neighbors=n_receivers,
-            diffusivity_cont=erodibility_sed_cont,
-            diffusivity_mar=erodibility_sed_mar,
+            diffusivity_cont=transportability_cont,
+            diffusivity_mar=transportability_mar,
             wave_base=wave_base,
-            critical_flux=critical_flux_sed,
+            critical_flux=0.0,
             porosity=porosity,
             max_erosion_rate_sed=max_erosion_rate_sed,
             active_layer_rate_sed=active_layer_rate_sed,
             bedrock_composition=bedrock_composition,
-            max_erosion_rate_br=0.0,
-            active_layer_rate_br=0.0,
+            max_erosion_rate_br=max_erosion_rate_br,
+            active_layer_rate_br=active_layer_rate_br,
             exponent_discharge=exponent_discharge,
             exponent_slope=exponent_slope,
             ref_water_flux=ref_water_flux,
+            fields_to_track=fields_to_track,
             substeps=substeps,
-            substep_fraction=substep_fraction,
+            time_step_fraction=time_step_fraction,
             max_substeps=max_substeps,
             min_slope=min_slope,
-            fields_to_track=fields_to_track,
         )
 
-        # Parameters
-        self._settling_velocity_cont = convert_to_array(settling_velocity)
-        self.critical_thickness = critical_thickness
-        self._K_br_cont = convert_to_array(erodibility_br_cont)
-        self._K_br_mar = convert_to_array(erodibility_br_mar)[np.newaxis]
-        self._critical_flux_br = convert_to_array(critical_flux_br)
+        second_per_year = 60.0 * 60.0 * 24.0 * 365.25
+        if shear_coefficient is None:
+            self._Kt = (
+                water_density
+                * gravitational_acceleration ** (2 / 3)
+                * convert_to_array(roughness) ** (1 / 3)
+                / 2.0
+            )
+        else:
+            self._Kt = convert_to_array(shear_coefficient)
+        self._Kt *= second_per_year ** (-self._m)
+        self._d = convert_to_array(sediment_diameter)
+        self._p = exponent_shear
+        self._hiding_exp = exponent_hiding
+        self._thetac = critical_shields_stress
+        self._rho_sed = convert_to_array(sediment_density)
+        self._rho_water = water_density
+        self._g = gravitational_acceleration
 
-        # Fields for sediment fluxes
-        n_nodes = grid.number_of_nodes
-        n_receivers = self._flow_receivers.shape[1]
-        n_sediments = self._stratigraphy.number_of_classes
-        self._settling_velocity = np.zeros((n_nodes, n_sediments))
-        self._K_br = np.zeros((n_nodes, 1, n_sediments))
-        self._erosion_flux_sed = np.zeros((n_nodes, n_receivers, n_sediments))
-        self._erosion_flux_br = np.zeros((n_nodes, n_receivers, n_sediments))
-        self._ratio_excess_thickness = np.zeros((n_nodes, 1, 1))
-        self._critical_rate_br = np.zeros((n_nodes, 1, n_sediments))
-        self._ratio_critical_outflux_br = np.zeros((n_nodes, n_receivers, n_sediments))
-
-    def _prepare_step(self):
-        """
-        Precomputes the substep-invariant quantities specific to this router. In
-        addition to the sediment diffusivity and discharge term handled by the
-        base classes, the bedrock diffusivity and the settling velocity depend
-        only on the bathymetry and are therefore computed once per step here.
-        """
-        super()._prepare_step()
-        self._calculate_bedrock_diffusivity()
-        self._calculate_settling_velocity()
-
-    def _calculate_bedrock_diffusivity(self):
-        """
-        Calculates the diffusivity coefficient of the bedrock over the continental
-        and marine domains.
-        """
-        self._K_br[self._bathymetry[:, 0] == 0.0] = self._K_br_cont
-        self._K_br[self._bathymetry[:, 0] > 0.0, 0] = self._K_br_mar * np.exp(
-            -self._bathymetry[self._bathymetry[:, 0] > 0.0] / self.wave_base
+        self._d50 = np.zeros((grid.number_of_nodes, 1, 1))
+        self._base_shear_stress = (
+            self._thetac * (self._rho_sed - self._rho_water) * self._g * self._d
         )
 
-    def _calculate_sediment_flux(self, dt):
+    def _calculate_sediment_outflux(self, dt):
         """
-        Calculates the erosion flux of sediments for multiple lithologies.
+        Calculates the sediment outflux for multiple lithologies.
         """
         core_nodes = self._grid.core_nodes
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
         self._calculate_active_layer_composition(dt)
 
-        self._erosion_flux_sed[:] = (
+        self._d50[:] = np.sum(
+            self._active_layer_composition * self._d, axis=-1, keepdims=True
+        )
+        self._critical_rate[:] = 0.0
+        np.divide(
+            self._d50,
+            self._d,
+            out=self._critical_rate,
+            where=self._d != 0,
+        )
+        self._critical_rate[:] = (
+            self._base_shear_stress * self._critical_rate**self._hiding_exp
+        )
+
+        self._sediment_outflux[:] = (
             self._K_sed
+            * cell_area
             * self._active_layer_composition
-            * self._water_flux_term
-            * self._slope**self._n
-        )
-        self._critical_rate[core_nodes] = self._critical_flux / cell_area[core_nodes]
-        self._ratio_critical_outflux[:] = 0.0
-        np.divide(
-            self._erosion_flux_sed,
-            self._critical_rate,
-            out=self._ratio_critical_outflux,
-            where=self._critical_rate != 0,
-        )
-        self._erosion_flux_sed[:] -= self._critical_rate * (
-            1.0 - np.exp(-self._ratio_critical_outflux)
-        )
-
-        self._ratio_excess_thickness[self._grid.core_nodes, 0, 0] = np.exp(
-            -self._stratigraphy.thickness / self.critical_thickness
-        )
-        self._erosion_flux_sed[:] *= 1.0 - self._ratio_excess_thickness
-        self._erosion_flux_sed[:] *= cell_area
-
-    def _calculate_bedrock_flux(self):
-        """
-        Calculates the erosion flux of the bedrock for multiple lithologies.
-        """
-        core_nodes = self._grid.core_nodes
-        cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
-
-        self._erosion_flux_br[:] = (
-            self._K_br
-            * self._bedrock_composition
-            * self._water_flux_term
-            * self._slope**self._n
-        )
-        self._critical_rate_br[self._grid.core_nodes] = (
-            self._critical_flux_br / cell_area[core_nodes]
-        )
-        self._ratio_critical_outflux_br[:] = 0.0
-        np.divide(
-            self._erosion_flux_br,
-            self._critical_rate_br,
-            out=self._ratio_critical_outflux_br,
-            where=self._critical_rate_br != 0,
-        )
-        self._erosion_flux_br[:] -= self._critical_rate_br * (
-            1.0 - np.exp(-self._ratio_critical_outflux_br)
-        )
-
-        self._erosion_flux_br[:] *= self._ratio_excess_thickness
-        self._erosion_flux_br[:] *= cell_area
-
-    def _calculate_settling_velocity(self):
-        """
-        Calculates the settling velocity over the continental and marine domains.
-        """
-        self._settling_velocity[:] = self._settling_velocity_cont
-        is_marine = self._bathymetry[:, 0] > 0.0
-        self._settling_velocity[is_marine] *= np.exp(
-            self._bathymetry[is_marine] / self.wave_base
+            * np.maximum(
+                self._Kt * self._water_flux_term * self._slope**self._n
+                - self._critical_rate,
+                0.0,
+            )
+            ** self._p
         )
 
     def _calculate_sediment_thickness(self, dt):
         """Calculates the sediment thickness change over the time step, dt."""
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
-        self._calculate_sediment_flux(dt)
-        if self._max_erosion_rate_sed != self._active_layer_rate_sed:
-            self._calculate_active_layer(self._max_erosion_rate_sed * dt, 0.0)
+        # Here we merge fluxes from the sediments and the bedrock together,
+        # assuming that weathered bedrock is perfectly equivalent to sediments,
+        # including in terms of porosity.
+        self._calculate_sediment_outflux(dt)
+        if (
+            self._max_erosion_rate_sed != self._active_layer_rate_sed
+            or self.max_erosion_rate_br != self._active_layer_rate_br
+        ):
+            self._calculate_active_layer(
+                self._max_erosion_rate_sed * dt, self.max_erosion_rate_br * dt
+            )
         self._max_sediment_outflux[:] = cell_area * self._active_layer[:, 0] / dt
-        self._calculate_bedrock_flux()
 
         self._sediment_influx[:] = self._sediment_input
-        self._sediment_outflux[:] = 0.0
-        calculate_sediment_fluxes(
+        calculate_sediment_influx(
             self._node_order,
-            cell_area[:, 0],
             self._flow_receivers[..., 0],
-            self._water_flux[:, 0, 0],
-            self._flow_proportions[..., 0],
             self._sediment_influx,
             self._sediment_outflux,
-            self._settling_velocity,
-            self._erosion_flux_sed,
-            self._erosion_flux_br,
             self._max_sediment_outflux,
-            self._porosity,
         )
 
         self._convert_fluxes_to_thickness(dt)

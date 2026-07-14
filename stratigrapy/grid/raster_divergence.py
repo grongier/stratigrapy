@@ -27,7 +27,6 @@ import numpy as np
 
 from .cfuncs import _calc_mult_flux_div_at_node
 
-
 ################################################################################
 # Flux divergence
 

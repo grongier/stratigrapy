@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,9 @@
 
 import numpy as np
 
-from ...utils import convert_to_array
+from ...utils import convert_angle_to_slope
 from .._base import _BaseDiffuser
 from ..stream_power.cfuncs import calculate_flux_limiter
-
 
 ################################################################################
 # Component
@@ -72,6 +71,10 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         max_erosion_rate_br=0.01,
         active_layer_rate_br=None,
         exponent_slope=1.0,
+        substeps=None,
+        substep_fraction=0.3,
+        max_substeps=1000,
+        min_slope=1e-7,
         fields_to_track=None,
     ):
         """
@@ -120,6 +123,27 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             default, it is set by the maximum erosion rate of the bedrock.
         exponent_slope : float (-)
             The exponent for the slope.
+        substeps : None, int, or 'adaptive', optional
+            Controls how the imposed time step is subdivided when running the component:
+                - If None, the time step is used as is (no subdivision).
+                - If an integer, the time step is split into that fixed number of
+                  equal substeps, with the topography (but not the flow) updated
+                  between substeps.
+                - If 'adaptive', the time step is adaptively subdivided to keep
+                  the explicit scheme stable, following the approach of CHILD:
+                  a Courant criterion for hillslope diffusion and a time-to-flattening
+                  criterion for fluvial transport.
+        substep_fraction : float, optional
+            Fraction of the stability limit used as the substep, to stay comfortably
+            below it. Only used when `substeps` is 'adaptive'.
+        max_substeps : int, optional
+            Maximum number of substeps allowed within a single time step, which
+            guarantees termination and sets the smallest possible substep
+            (dt / max_substeps). Only used when `substeps` is 'adaptive'.
+        min_slope : float, optional
+            Slope below which a pair of nodes is ignored when estimating the
+            stable substep, to avoid vanishingly small substeps on near-flat
+            terrain. Only used when `substeps` is 'adaptive'.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -136,28 +160,21 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             max_erosion_rate_br,
             active_layer_rate_br,
             exponent_slope,
-            fields_to_track,
+            substeps=substeps,
+            substep_fraction=substep_fraction,
+            max_substeps=max_substeps,
+            min_slope=min_slope,
+            fields_to_track=fields_to_track,
         )
 
         # Parameters
-        if critical_angle_cont is None:
-            self._critical_slope_cont = None
-        else:
-            self._critical_slope_cont = convert_to_array(critical_angle_cont)
-            if np.all(self._critical_slope_cont == 0.0):
-                self._critical_slope_cont = None
+        self._critical_slope_cont = convert_angle_to_slope(critical_angle_cont)
+        self._critical_slope_mar = convert_angle_to_slope(critical_angle_mar)
+        if (self._critical_slope_cont is None) != (self._critical_slope_mar is None):
+            if self._critical_slope_cont is None:
+                self._critical_slope_cont = np.array([np.inf])
             else:
-                self._critical_slope_cont = np.tan(
-                    np.deg2rad(self._critical_slope_cont)
-                )
-        if critical_angle_mar is None:
-            self._critical_slope_mar = None
-        else:
-            self._critical_slope_mar = convert_to_array(critical_angle_mar)
-            if np.all(self._critical_slope_mar == 0.0):
-                self._critical_slope_mar = None
-            else:
-                self._critical_slope_mar = np.tan(np.deg2rad(self._critical_slope_mar))
+                self._critical_slope_mar = np.array([np.inf])
 
         # Physical fields
         n_links = grid.number_of_links
@@ -169,10 +186,7 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         self._node_order = np.zeros(n_nodes, dtype=int)
         self._K_sed_at_links = np.zeros((n_links, n_sediments))
         self._slope_at_links = np.zeros((n_links, 1))
-        if (
-            self._critical_slope_cont is not None
-            and self._critical_slope_mar is not None
-        ):
+        if self._critical_slope_cont is not None:
             self._thres_slope_at_links = np.zeros((n_links, n_sediments))
             self._critical_slope_at_links = np.zeros((n_links, n_sediments))
         self._active_layer_composition_at_links = np.zeros((n_links, n_sediments))
@@ -218,7 +232,6 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             self._topography
         )[self._grid.active_links]
         self._calculate_active_layer_composition(dt)
-        self._calculate_sediment_diffusivity()
 
         self._grid.map_mean_of_link_nodes_to_link(
             self._K_sed[:, 0], out=self._K_sed_at_links
@@ -229,10 +242,7 @@ class GravityDrivenDiffuser(_BaseDiffuser):
             out=self._active_layer_composition_at_links,
         )
 
-        if (
-            self._critical_slope_cont is not None
-            and self._critical_slope_mar is not None
-        ):
+        if self._critical_slope_cont is not None:
             self._adjust_sediment_diffusivity()
 
         self._sediment_flux_at_links[:] = (
@@ -283,21 +293,8 @@ class GravityDrivenDiffuser(_BaseDiffuser):
 
         self._sediment_flux_at_links *= self._flux_limiter_at_links
 
-    def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the diffuser for one timestep, dt.
-
-        Parameters
-        ----------
-        dt : float (time)
-            The imposed timestep.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
-        update : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer.
-        """
+    def _calculate_sediment_thickness(self, dt):
+        """Calculates the sediment thickness change over the time step, dt."""
         core_nodes = self._grid.core_nodes
 
         self._calculate_sediment_flux(dt)
@@ -309,5 +306,3 @@ class GravityDrivenDiffuser(_BaseDiffuser):
         self._sediment_thickness[core_nodes] = (
             -self._sediment_rate[core_nodes] * dt / (1.0 - self._porosity)
         )
-
-        self._update_physical_fields(dt, update_compatible, update)

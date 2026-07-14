@@ -4,7 +4,11 @@ StratigraPy is a Python package for stratigraphic modeling based on [Landlab](ht
 
 StratigraPy is still experimental and under heavy development.
 
-[![Click to watch the video](https://img.youtube.com/vi/THp7vKp5ha4/maxresdefault.jpg)](https://www.youtube.com/watch?v=THp7vKp5ha4)
+<p align="center">
+    <a href="https://www.youtube.com/watch?v=h0aWwoiahR0" title="Click to watch the video">
+        <img src="https://img.youtube.com/vi/h0aWwoiahR0/maxresdefault.jpg" alt="Basin simulation" width="80%"/>
+    </a>
+</p>
 
 ## Installation
 
@@ -87,6 +91,6 @@ This software was written by:
 
 Copyright notice: Technische Universiteit Delft hereby disclaims all copyright interest in the program StratigraPy written by the Author(s). Prof.dr.ir. S.G.J. Aarninkhof, Dean of the Faculty of Civil Engineering and Geosciences
 
-&#169; 2025, Guillaume Rongier
+&#169; 2025-2026, Guillaume Rongier
 
 This work is licensed under a MIT OSS licence, see [LICENSE](LICENSE) for more information.

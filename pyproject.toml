@@ -36,6 +36,7 @@ ext-modules = [
     {name = "stratigrapy.components.diffusion.cfuncs", sources = ["stratigrapy/components/diffusion/cfuncs.pyx"]},
     {name = "stratigrapy.components.stream_power.cfuncs", sources = ["stratigrapy/components/stream_power/cfuncs.pyx"]},
     {name = "stratigrapy.components.landsliding.cfuncs", sources = ["stratigrapy/components/landsliding/cfuncs.pyx"]},
+    {name = "stratigrapy.components.compaction.cfuncs", sources = ["stratigrapy/components/compaction/cfuncs.pyx"]},
 ]
 
 [tool.setuptools.packages.find]

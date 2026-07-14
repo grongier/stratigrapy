@@ -24,7 +24,7 @@
 
 
 cimport cython
-from libc.math cimport atan, M_PI
+from libc.math cimport tan
 
 # https://cython.readthedocs.io/en/stable/src/userguide/fusedtypes.html
 ctypedef fused id_t:
@@ -75,8 +75,10 @@ cpdef void calculate_sediment_influx(
             total_sediment_influx += sediment_influx[node, k]
             repose_slope += repose_angle[node, k]*sediment_influx[node, k]
         if total_sediment_influx > 0.:
-            repose_slope /= n_sediments*total_sediment_influx
-            repose_slope = atan(repose_slope*M_PI/180.)
+            # Influx-weighted mean angle of repose (already in radians), turned
+            # into a slope (gradient) so it can be compared with `new_slope`.
+            repose_slope /= total_sediment_influx
+            repose_slope = tan(repose_slope)
             # Compute the new depositional slope
             new_slope = slope[node]
             if cell_area[node] > 0. and link_lengths[node] > 0.:

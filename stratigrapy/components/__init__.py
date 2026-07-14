@@ -7,6 +7,7 @@ from .diffusion import GravityDrivenRouter
 from .stream_power import WaterDrivenDiffuser
 from .stream_power import WaterDrivenRouter
 from .stream_power import FluxDrivenRouter
+from .stream_power import StressDrivenRouter
 from .landsliding import SimpleSedimentLandslider
 from .compaction import SedimentCompactor
 
@@ -20,6 +21,7 @@ COMPONENTS = [
     WaterDrivenDiffuser,
     WaterDrivenRouter,
     FluxDrivenRouter,
+    StressDrivenRouter,
     SimpleSedimentLandslider,
     SedimentCompactor,
 ]

@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +29,6 @@ from landlab import RasterModelGrid
 from .._base import _BaseRouter
 from ...utils import convert_to_array
 from .cfuncs import calculate_sediment_influx
-
 
 ################################################################################
 # Component
@@ -130,7 +129,12 @@ class SimpleSedimentLandslider(_BaseRouter):
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
         """
-        super().__init__(grid, 1, porosity, fields_to_track)
+        super().__init__(
+            grid,
+            number_of_neighbors=1,
+            porosity=porosity,
+            fields_to_track=fields_to_track,
+        )
 
         # Parameters
         self._repose_angle_cont = np.deg2rad(convert_to_array(repose_angle_cont))
@@ -172,6 +176,15 @@ class SimpleSedimentLandslider(_BaseRouter):
         self._active_layer = np.zeros((n_nodes, n_sediments))
         self._active_layer_thickness = np.zeros((n_nodes, 1))
         self._active_layer_composition = np.zeros((n_nodes, n_sediments))
+
+    def _prepare_step(self):
+        """
+        Precomputes the substep-invariant quantities for the landslider. The
+        repose angle depends only on the bathymetry, which is frozen between
+        substeps, so it is computed once per step here.
+        """
+        super()._prepare_step()
+        self._calculate_sediment_repose_angle()
 
     def _calculate_sediment_repose_angle(self):
         """
@@ -216,7 +229,6 @@ class SimpleSedimentLandslider(_BaseRouter):
         """
         Calculates the sediment outflux for multiple lithologies.
         """
-        self._calculate_sediment_repose_angle()
         self._calculate_active_layer_composition(dt)
 
         self._steepest_receivers[:] = np.argmax(self._slope, axis=1, keepdims=True)
@@ -252,7 +264,7 @@ class SimpleSedimentLandslider(_BaseRouter):
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
         if self._max_erosion_rate != self._active_layer_rate:
-            self._calculate_active_layer(self._max_erosion_rate * dt, 0.0)
+            self._calculate_active_layer(self._max_erosion_rate * dt)
         self._max_sediment_outflux[:, 0] = cell_area * self._active_layer / dt
 
         self._sediment_outflux[self._sediment_outflux > self._max_sediment_outflux] = (
@@ -261,21 +273,8 @@ class SimpleSedimentLandslider(_BaseRouter):
             ]
         )
 
-    def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the landslider for one timestep, dt.
-
-        Parameters
-        ----------
-        dt : float (time)
-            The imposed timestep.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
-        update : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer.
-        """
+    def _calculate_sediment_thickness(self, dt):
+        """Calculates the sediment thickness change over the time step, dt."""
         self._calculate_sediment_outflux(dt)
         self._threshold_sediment_outflux(dt)
 
@@ -295,4 +294,4 @@ class SimpleSedimentLandslider(_BaseRouter):
             dt,
         )
 
-        self._apply_fluxes(dt, update_compatible, update)
+        self._convert_fluxes_to_thickness(dt)

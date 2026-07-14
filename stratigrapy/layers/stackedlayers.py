@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -38,7 +38,6 @@ from .cfuncs import (
     get_active_layer,
 )
 
-
 ################################################################################
 # Base functions
 
@@ -57,12 +56,14 @@ def _broadcast(x, shape):
     return x
 
 
-def _deposit_or_erode(layers, bottom_index, top_index, dz):
-    """Update the array that contains layers with deposition or erosion."""
+def _deposit_or_erode(layers, bottom_index, top_index, dz, thickness_change):
+    """Update the array that contains layers with deposition or erosion, and
+    accumulate the actual per-stack thickness change into `thickness_change`.
+    """
     layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
     dz = _broadcast(dz, layers.shape[1:3])
 
-    deposit_or_erode(layers, bottom_index, top_index, dz)
+    deposit_or_erode(layers, bottom_index, top_index, dz, thickness_change)
 
 
 def _get_surface_index(layers, bottom_index, top_index, surface_index):
@@ -72,27 +73,39 @@ def _get_surface_index(layers, bottom_index, top_index, surface_index):
     get_surface_index(layers, bottom_index, top_index, surface_index)
 
 
-def _get_superficial_layer(layers, bottom_index, top_index, dz, superficial_layer):
+def _get_superficial_layer(
+    layers, bottom_index, top_index, dz, superficial_layer, exhausted
+):
     """Get the thicknesses of all classes in a superficial layer defined by its
-    thickness from the surface `dz`.
+    thickness from the surface `dz`, flagging in `exhausted` the stacks whose
+    sediments are all included in the superficial layer.
     """
     layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
     dz = _broadcast(dz, layers.shape[1:2])
 
-    get_superficial_layer(layers, bottom_index, top_index, dz, superficial_layer)
+    get_superficial_layer(
+        layers, bottom_index, top_index, dz, superficial_layer, exhausted
+    )
 
 
-def _get_active_layer(layers, porosity, bottom_index, top_index, dz, active_layer):
+def _get_active_layer(
+    layers, porosity, bottom_index, top_index, dz, active_layer, exhausted
+):
     """Get the thicknesses of all classes in an active layer defined by its
-    thickness from the surface `dz`.
+    thickness from the surface `dz`, flagging in `exhausted` the stacks whose
+    sediments are all included in the active layer.
     """
     layers = layers.reshape((layers.shape[0], layers.shape[1], -1))
     dz = _broadcast(dz, layers.shape[1:2])
 
     if porosity is not None and porosity.shape == layers.shape:
-        get_active_layer(layers, porosity, bottom_index, top_index, dz, active_layer)
+        get_active_layer(
+            layers, porosity, bottom_index, top_index, dz, active_layer, exhausted
+        )
     else:
-        get_superficial_layer(layers, bottom_index, top_index, dz, active_layer)
+        get_superficial_layer(
+            layers, bottom_index, top_index, dz, active_layer, exhausted
+        )
         if porosity is not None:
             active_layer *= 1.0 - porosity
 
@@ -208,6 +221,16 @@ def resize_array(array, left_new_cap, right_new_cap):
 class StackedLayersMixIn:
     """MixIn that adds a StackedLayers attribute to a ModelGrid."""
 
+    _CONFIG_ATTRS = (
+        "number_of_classes",
+        "initial_allocation",
+        "new_allocation",
+        "number_of_layers_to_fuse",
+        "number_of_top_layers",
+        "fuse_continuously",
+        "remove_empty_layers",
+    )
+
     def __init__(
         self,
         number_of_classes,
@@ -230,11 +253,13 @@ class StackedLayersMixIn:
             If an int, the layers are pre-allocated at the end; it an array-like,
             the first element corresponds to layers pre-allocated at the start, the
             second to layers pre-allocated at the end.
-        new_allocation : int or array-like, optional
+        new_allocation : int, str, or array-like, optional
             Number of layers pre-allocated when adding new layers to speed up the
-            process. If an int, the layers are pre-allocated at the end; it an
-            array-like, the first element corresponds to layers pre-allocated at the
-            start, the second to layers pre-allocated at the end.
+            process. If 'geometric', the number of pre-allocated layers grows with
+            the number of layers in the stacks, which keeps the cost of adding
+            layers amortized constant. If an array-like, the first element
+            corresponds to layers pre-allocated at the start, the second to layers
+            pre-allocated at the end.
         number_of_layers_to_fuse : int, optional
             Number of layers to merge together when calling `fuse`.
         number_of_top_layers : int, optional
@@ -278,6 +303,31 @@ class StackedLayersMixIn:
         """StackedLayers for each cell."""
         return self.stacked_layers
 
+    def __getstate__(self):
+        """Get state for pickling and deep copying."""
+        base_getstate = getattr(super(), "__getstate__", None)
+        # Landlab's grid state: raster's custom pickle dict, or the instance
+        # __dict__ for the Voronoi/Hex grids that define no state hooks.
+        base = base_getstate() if base_getstate is not None else dict(self.__dict__)
+        return {
+            "base": base,
+            "config": {attr: getattr(self, attr) for attr in self._CONFIG_ATTRS},
+            # None if the layers were never accessed; rebuilt lazily on the copy.
+            "stacked_layers": self.__dict__.get("_stacked_layers"),
+        }
+
+    def __setstate__(self, state):
+        """Restore state when unpickling or deep copying."""
+        base_setstate = getattr(super(), "__setstate__", None)
+        if base_setstate is not None:  # raster: rebuilds grid geometry and fields
+            base_setstate(state["base"])
+        else:  # voronoi/hex: base is the instance __dict__
+            self.__dict__.update(state["base"])
+        for attr, value in state["config"].items():
+            setattr(self, attr, value)
+        if state["stacked_layers"] is not None:
+            self._stacked_layers = state["stacked_layers"]
+
 
 ################################################################################
 # StackedLayers
@@ -298,10 +348,13 @@ class StackedLayers:
         If an int, the layers are pre-allocated at the end; it an array-like,
         the first element corresponds to layers pre-allocated at the start, the
         second to layers pre-allocated at the end.
-    new_allocation : int or array-like, optional
+    new_allocation : int, str, or array-like, optional
         Number of layers pre-allocated when adding new layers to speed up the
-        process. If an array-like, different number of layers are pre-allocated
-        at the start and at the end of the stacks.
+        process. If 'geometric', the number of pre-allocated layers grows with
+        the number of layers in the stacks, which keeps the cost of adding
+        layers amortized constant. If an array-like, the first element
+        corresponds to layers pre-allocated at the start, the second to layers
+        pre-allocated at the end.
     number_of_layers_to_fuse : int, optional
         Number of layers to merge together when calling `fuse`.
     number_of_top_layers : int, optional
@@ -320,7 +373,7 @@ class StackedLayers:
         number_of_stacks,
         number_of_classes=1,
         initial_allocation=0,
-        new_allocation=1,
+        new_allocation="geometric",
         number_of_layers_to_fuse=1,
         number_of_top_layers=1,
         fuse_continuously=True,
@@ -330,12 +383,16 @@ class StackedLayers:
 
         if isinstance(initial_allocation, int):
             initial_allocation = (0, initial_allocation)
+        # Make sure that we have at least one allocated layer
+        if initial_allocation[0] + initial_allocation[1] == 0:
+            initial_allocation = (initial_allocation[0], 1)
 
         self._first_layer = initial_allocation[0]
         self._number_of_layers = 0
         self._number_of_stacks = number_of_stacks
         self._number_of_classes = number_of_classes
         self._surface_index = np.zeros(number_of_stacks, dtype=int)
+        self._thickness = np.zeros(number_of_stacks)
         self._attrs = {}
 
         self.number_of_layers_to_fuse = number_of_layers_to_fuse
@@ -346,13 +403,21 @@ class StackedLayers:
 
         dims = (self.number_of_layers, self.number_of_stacks, self.number_of_classes)
         self._attrs["_dz"] = np.zeros(dims, dtype=float)
+        surfaces = (self.number_of_layers, self.number_of_stacks)
+        self._attrs["_z_bottom"] = np.zeros(surfaces, dtype=float)
+        self._attrs["_z_top"] = np.zeros(surfaces, dtype=float)
         self._resize(initial_allocation[0], initial_allocation[1])
         self._left_allocated = initial_allocation[0]
         self._right_allocated = initial_allocation[1]
-        if isinstance(new_allocation, int):
-            self.new_allocation = (new_allocation, new_allocation)
-        else:
-            self.new_allocation = new_allocation
+        if isinstance(new_allocation, (int, str)):
+            new_allocation = (new_allocation, new_allocation)
+        for allocation in new_allocation:
+            if isinstance(allocation, str) and allocation != "geometric":
+                raise ValueError(
+                    f"invalid new_allocation {allocation!r}, the only valid"
+                    " string is 'geometric'"
+                )
+        self.new_allocation = new_allocation
         self.remove_empty_layers = remove_empty_layers
 
     def __getitem__(self, name):
@@ -372,6 +437,8 @@ class StackedLayers:
         self._attrs[name][
             self._first_layer : self._first_layer + self.number_of_layers
         ] = values
+        if name == "_dz":
+            self._recompute_thickness()
 
     def __iter__(self):
         return (name for name in self._attrs if not name.startswith("_"))
@@ -419,14 +486,23 @@ class StackedLayers:
         """Number of classes."""
         return self._number_of_classes
 
+    def _recompute_thickness(self):
+        """Recompute the running total thickness of each stack from the layers.
+        Only needed after an operation that modifies the layers without keeping
+        the running total up to date (e.g., modifying `dz` directly).
+        """
+        self._thickness[:] = np.sum(self.dz, axis=(0, 2))
+
     @property
     def thickness(self):
         """Total thickness of the columns.
 
         The sum of all layer thicknesses for each stack as an array
-        of shape `(number_of_stacks, )`.
+        of shape `(number_of_stacks, )`. This is a running total kept up to
+        date by the operations that modify the layers; if `dz` is modified
+        directly, call `_recompute_thickness` to resynchronize it.
         """
-        return np.sum(self.dz, axis=(0, 2))
+        return self._thickness.copy()
 
     def _get_thickness(self, axis, porosity=None):
         """Total sediment thickness of the columns, removing the porosity if given."""
@@ -457,6 +533,8 @@ class StackedLayers:
             The sum of all layer thicknesses for each stack as an array of shape
             `(number_of_stacks,)`.
         """
+        if porosity is None:
+            return self.thickness
         return self._get_thickness((0, 2), porosity=porosity)
 
     @property
@@ -513,6 +591,24 @@ class StackedLayers:
         `(number_of_layers, number_of_stacks, number of classes)`.
         """
         return self._attrs["_dz"][
+            self._first_layer : self._first_layer + self.number_of_layers
+        ]
+
+    @property
+    def z_bottom(self):
+        """Depositional base of each layer at the time of deposition (so invariant
+        to future erosion).
+        """
+        return self._attrs["_z_bottom"][
+            self._first_layer : self._first_layer + self.number_of_layers
+        ]
+
+    @property
+    def z_top(self):
+        """Depositional top of each layer at the time of deposition (so invariant
+        to future erosion).
+        """
+        return self._attrs["_z_top"][
             self._first_layer : self._first_layer + self.number_of_layers
         ]
 
@@ -577,23 +673,29 @@ class StackedLayers:
             self._setup_layers(**kwds)
 
         if update_compatible == True:
-            is_compatible = self.number_of_layers > 0 and self.is_compatible(dz, **kwds)
+            is_compatible = self.number_of_layers > 0 and self.is_compatible(
+                dz, at_bottom=at_bottom, **kwds
+            )
         else:
             is_compatible = False
 
-        if (update == False and is_compatible == False) or (
+        added_new_layer = (update == False and is_compatible == False) or (
             update == True and self.number_of_layers == 0
-        ):
+        )
+        if added_new_layer:
             self._add_empty_layer(at_bottom=at_bottom)
 
         layer = self._first_layer
         if at_bottom == False:
             layer += self.number_of_layers - 1
-        _deposit_or_erode(self._attrs["_dz"], self._first_layer, layer, dz)
+        _deposit_or_erode(
+            self._attrs["_dz"], self._first_layer, layer, dz, self._thickness
+        )
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(
             self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
         )
+        self._set_depositional_heights(layer, at_bottom, added_new_layer)
 
         if is_compatible == False:
             for name in kwds:
@@ -621,11 +723,18 @@ class StackedLayers:
             self._setup_layers(**kwds)
 
         _deposit_or_erode(
-            self._attrs["_dz"], self._first_layer, self._first_layer + layer, dz
+            self._attrs["_dz"],
+            self._first_layer,
+            self._first_layer + layer,
+            dz,
+            self._thickness,
         )
         last_layer = self._first_layer + self.number_of_layers - 1
         _get_surface_index(
             self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+        )
+        self._set_depositional_heights(
+            self._first_layer + layer, at_bottom=False, new_layer=False
         )
 
         for name in kwds:
@@ -636,6 +745,42 @@ class StackedLayers:
                 raise ValueError(
                     f"{name!r} is not being tracked. Error in adding."
                 ) from exc
+
+    def _set_depositional_heights(self, layer, at_bottom, new_layer):
+        """Record the invariant depositional base/top of a layer.
+
+        Heights are measured from the base of the stack. A new layer at the top
+        rests on the current surface; a new layer at the bottom sits below
+        everything, so the layers above it shift up by its thickness. Depositing
+        into an existing layer leaves its base fixed and only raises its top.
+        Later (top-down) erosion never changes these values, except when an
+        update erodes below the top layer's recorded base: the top layer always
+        rests on the preserved stack, so its base follows the eroded surface
+        down, exactly as the base of a new layer would record that surface.
+        """
+        layer_thickness = self._attrs["_dz"][layer].sum(axis=-1)
+        z_bottom, z_top = self._attrs["_z_bottom"], self._attrs["_z_top"]
+        if new_layer and at_bottom:
+            above = slice(
+                self._first_layer + 1, self._first_layer + self.number_of_layers
+            )
+            z_bottom[above] += layer_thickness
+            z_top[above] += layer_thickness
+            z_bottom[layer] = 0.0
+            z_top[layer] = layer_thickness
+        elif new_layer:
+            surface = self.thickness  # total height after deposition, per stack
+            z_top[layer] = surface
+            z_bottom[layer] = surface - layer_thickness
+        else:
+            last_layer = self._first_layer + self.number_of_layers - 1
+            if at_bottom == False and layer == last_layer:
+                np.minimum(
+                    z_bottom[layer],
+                    self._thickness - layer_thickness,
+                    out=z_bottom[layer],
+                )
+            z_top[layer] = z_bottom[layer] + layer_thickness
 
     def _reduce_attribute(self, array, start, stop, step, n_blocks, reducer):
         """Combines layers of a specific attribute."""
@@ -680,9 +825,15 @@ class StackedLayers:
         n_blocks = (stop - start) // step
         n_removed = n_blocks * (step - 1)
         for name, array in self._attrs.items():
-            if name != "_dz":
+            if name == "_dz":
+                continue
+            elif name == "_z_bottom":
+                reducer = np.min  # fused base = base of the oldest sublayer
+            elif name == "_z_top":
+                reducer = np.max  # fused top = top of the youngest sublayer
+            else:
                 reducer = kwds.get(name, np.sum)
-                self._reduce_attribute(array, start, stop, step, n_blocks, reducer)
+            self._reduce_attribute(array, start, stop, step, n_blocks, reducer)
         reducer = kwds.get("_dz", np.sum)
         self._reduce_attribute(self._attrs["_dz"], start, stop, step, n_blocks, reducer)
 
@@ -695,6 +846,10 @@ class StackedLayers:
         _get_surface_index(
             self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
         )
+        # The default np.sum reducer conserves the total thickness, but a custom
+        # reducer may not; recomputing here also absorbs any floating-point
+        # drift of the running total
+        self._recompute_thickness()
 
     def fuse(self, finalize=False, **kwds):
         """Fuse layers to save computational resources during runtime. Layers
@@ -758,7 +913,7 @@ class StackedLayers:
         """Composition of the surface layer (i.e., proportion of each class)."""
         return self._get_composition(self.get_surface_values("_dz"))
 
-    def get_superficial_layer(self, dz):
+    def get_superficial_layer(self, dz, return_exhausted=False):
         """Get the thicknesses of all classes in a superficial layer defined by
         its thickness from the surface `dz`.
 
@@ -766,21 +921,31 @@ class StackedLayers:
         ----------
         dz : float or array_like
             Thickness from the surface of the superficial layer.
+        return_exhausted : bool, optional
+            If True, also return a boolean array flagging the stacks whose
+            sediments are all included in the superficial layer.
 
         Returns
         -------
         superficial_layer
             The thickness of material from each class within the superficial layer.
+        exhausted
+            Only returned when `return_exhausted` is True. For each stack, True
+            when the superficial layer includes all the available sediments.
         """
         superficial_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
+        exhausted = np.zeros(self.number_of_stacks, dtype=bool)
         _get_superficial_layer(
             self._attrs["_dz"],
             self._first_layer,
             self._surface_index,
             dz,
             superficial_layer,
+            exhausted.view(np.uint8),
         )
 
+        if return_exhausted == True:
+            return superficial_layer, exhausted
         return superficial_layer
 
     def get_superficial_composition(self, dz):
@@ -799,7 +964,7 @@ class StackedLayers:
         """
         return self._get_composition(self.get_superficial_layer(dz))
 
-    def get_active_layer(self, dz, porosity=None):
+    def get_active_layer(self, dz, porosity=None, return_exhausted=False):
         """Get the thicknesses of all classes in an active layer defined by its
         thickness from the surface `dz`.
 
@@ -811,11 +976,17 @@ class StackedLayers:
             Porosity of all the layers for each class, which can be a layer
             property given by its name, or the porosity for each class, which
             is then identical for all layers.
+        return_exhausted : bool, optional
+            If True, also return a boolean array flagging the stacks whose
+            sediments are all included in the active layer.
 
         Returns
         -------
         active_layer
             The thickness of material from each class within the active layer.
+        exhausted
+            Only returned when `return_exhausted` is True. For each stack, True
+            when the active layer includes all the available sediments.
         """
         if isinstance(porosity, str):
             porosity = self._attrs[porosity]
@@ -823,6 +994,7 @@ class StackedLayers:
             porosity = np.asarray(porosity)
 
         active_layer = np.zeros((self.number_of_stacks, self.number_of_classes))
+        exhausted = np.zeros(self.number_of_stacks, dtype=bool)
         _get_active_layer(
             self._attrs["_dz"],
             porosity,
@@ -830,8 +1002,11 @@ class StackedLayers:
             self._surface_index,
             dz,
             active_layer,
+            exhausted.view(np.uint8),
         )
 
+        if return_exhausted == True:
+            return active_layer, exhausted
         return active_layer
 
     def get_active_composition(self, dz, porosity=None):
@@ -854,15 +1029,26 @@ class StackedLayers:
         """
         return self._get_composition(self.get_active_layer(dz, porosity))
 
+    def _grow_allocation(self, side):
+        """Return the number of layers to pre-allocate on one side of the stacks
+        (0 for the start, 1 for the end), following `new_allocation`.
+        """
+        new_allocation = self.new_allocation[side]
+        if new_allocation == "geometric":
+            return self.number_of_layers // 8 + 6
+        return new_allocation
+
     def _add_empty_layer(self, at_bottom=False):
         """Add a new empty layer to the stacks."""
         if at_bottom == False and self._right_allocated == 0:
-            self._resize(0, self.new_allocation[1])
-            self._right_allocated = self.new_allocation[1]
+            new_allocation = self._grow_allocation(1)
+            self._resize(0, new_allocation)
+            self._right_allocated = new_allocation
         elif at_bottom == True and self._left_allocated == 0:
-            self._resize(self.new_allocation[0], 0)
-            self._left_allocated = self.new_allocation[0]
-            self._first_layer = self.new_allocation[0]
+            new_allocation = self._grow_allocation(0)
+            self._resize(new_allocation, 0)
+            self._left_allocated = new_allocation
+            self._first_layer = new_allocation
 
         self._number_of_layers += 1
         if at_bottom == False:
@@ -880,6 +1066,7 @@ class StackedLayers:
         """Remove empty layers at the top of the stack"""
         number_of_filled_layers = self.surface_index.max() + 1 - self._first_layer
         if number_of_filled_layers < self.number_of_layers:
+            self._right_allocated += self.number_of_layers - number_of_filled_layers
             self._number_of_layers = number_of_filled_layers
 
     def remove_last_layers(self, number_of_layers=1):
@@ -892,15 +1079,23 @@ class StackedLayers:
         """
         self._number_of_layers -= number_of_layers
         self._right_allocated += number_of_layers
-        self._surface_index -= number_of_layers
+        last_layer = self._first_layer + self.number_of_layers - 1
+        _get_surface_index(
+            self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+        )
+        self._recompute_thickness()
 
-    def is_compatible(self, dz, **kwds):
-        """Check if a new layer is compatible with the existing top layer.
+    def is_compatible(self, dz, at_bottom=False, **kwds):
+        """Check if a new layer is compatible with the existing layer at the
+        edge of the stack.
 
         Parameters
         ----------
         dz : float or array_like
             Thickness to add to each stack.
+        at_bottom : bool, optional
+            If False, check compatibility with the layer at the top of the
+            stack; otherwise, with the layer at the bottom of the stack.
 
         Returns
         -------
@@ -920,8 +1115,9 @@ class StackedLayers:
                     " is not being tracked. Currently tracking:"
                     f" {', '.join(sorted(repr(t) for t in set(self)))}"
                 )
+            edge_layer = 0 if at_bottom == True else -1
             for name in kwds:
-                is_compatible = self[name][-1] == kwds[name]
+                is_compatible = self[name][edge_layer] == kwds[name]
 
                 if not np.all(is_compatible[where_deposition]):
                     return False

@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@ import numpy as np
 
 from .._base import _BaseRouter, _BaseStreamPower
 from .cfuncs import calculate_sediment_influx
-
 
 ################################################################################
 # Component
@@ -140,6 +139,10 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         exponent_discharge=1.0,
         exponent_slope=1.0,
         ref_water_flux=None,
+        substeps=None,
+        substep_fraction=0.3,
+        max_substeps=1000,
+        min_slope=1e-7,
         fields_to_track=None,
     ):
         """
@@ -191,6 +194,27 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             The reference water flux by which the water discharge is normalized.
             If a float, that value is used at each time step; if 'max', the
             maximum value of discharge at each time step is used.
+        substeps : None, int, or 'adaptive', optional
+            Controls how the imposed time step is subdivided when running the component:
+                - If None, the time step is used as is (no subdivision).
+                - If an integer, the time step is split into that fixed number of
+                  equal substeps, with the topography (but not the flow) updated
+                  between substeps.
+                - If 'adaptive', the time step is adaptively subdivided to keep
+                  the explicit scheme stable, following the approach of CHILD:
+                  a Courant criterion for hillslope diffusion and a time-to-flattening
+                  criterion for fluvial transport.
+        substep_fraction : float, optional
+            Fraction of the stability limit used as the substep, to stay comfortably
+            below it. Only used when `substeps` is 'adaptive'.
+        max_substeps : int, optional
+            Maximum number of substeps allowed within a single time step, which
+            guarantees termination and sets the smallest possible substep
+            (dt / max_substeps). Only used when `substeps` is 'adaptive'.
+        min_slope : float, optional
+            Slope below which a pair of nodes is ignored when estimating the
+            stable substep, to avoid vanishingly small substeps on near-flat
+            terrain. Only used when `substeps` is 'adaptive'.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -214,6 +238,10 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             exponent_discharge=exponent_discharge,
             exponent_slope=exponent_slope,
             ref_water_flux=ref_water_flux,
+            substeps=substeps,
+            substep_fraction=substep_fraction,
+            max_substeps=max_substeps,
+            min_slope=min_slope,
             fields_to_track=fields_to_track,
         )
 
@@ -224,13 +252,12 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         core_nodes = self._grid.core_nodes
         cell_area = self._grid.cell_area_at_node[:, np.newaxis, np.newaxis]
 
-        self._calculate_sediment_diffusivity()
         self._calculate_active_layer_composition(dt)
 
         self._sediment_outflux[:] = (
             self._K_sed
             * self._active_layer_composition
-            * (self._water_flux * self._flow_proportions) ** self._m
+            * self._water_flux_term
             * self._slope**self._n
         )
         self._critical_rate[core_nodes] = self._critical_flux / cell_area[core_nodes]
@@ -246,24 +273,9 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
         )
         self._sediment_outflux[:] *= cell_area
 
-    def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the router for one timestep, dt.
-
-        Parameters
-        ----------
-        dt : float (time)
-            The imposed timestep.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
-        update : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer.
-        """
+    def _calculate_sediment_thickness(self, dt):
+        """Calculates the sediment thickness change over the time step, dt."""
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
-
-        self._normalize_water_flux()
 
         # Here we merge fluxes from the sediments and the bedrock together,
         # assuming that weathered bedrock is perfectly equivalent to sediments,
@@ -287,4 +299,4 @@ class WaterDrivenRouter(_BaseRouter, _BaseStreamPower):
             self._max_sediment_outflux,
         )
 
-        self._apply_fluxes(dt, update_compatible, update)
+        self._convert_fluxes_to_thickness(dt)

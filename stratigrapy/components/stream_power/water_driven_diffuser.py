@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@ import numpy as np
 
 from .._base import _BaseStreamPower
 from .cfuncs import calculate_flux_limiter
-
 
 ################################################################################
 # Component
@@ -70,6 +69,10 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         exponent_discharge=1.0,
         exponent_slope=1.0,
         ref_water_flux=None,
+        substeps=None,
+        substep_fraction=0.3,
+        max_substeps=1000,
+        min_slope=1e-7,
         fields_to_track=None,
     ):
         """
@@ -118,6 +121,27 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             The reference water flux by which the water discharge is normalized.
             If a float, that value is used at each time step; if 'max', the
             maximum value of discharge at each time step is used.
+        substeps : None, int, or 'adaptive', optional
+            Controls how the imposed time step is subdivided when running the component:
+                - If None, the time step is used as is (no subdivision).
+                - If an integer, the time step is split into that fixed number of
+                  equal substeps, with the topography (but not the flow) updated
+                  between substeps.
+                - If 'adaptive', the time step is adaptively subdivided to keep
+                  the explicit scheme stable, following the approach of CHILD:
+                  a Courant criterion for hillslope diffusion and a time-to-flattening
+                  criterion for fluvial transport.
+        substep_fraction : float, optional
+            Fraction of the stability limit used as the substep, to stay comfortably
+            below it. Only used when `substeps` is 'adaptive'.
+        max_substeps : int, optional
+            Maximum number of substeps allowed within a single time step, which
+            guarantees termination and sets the smallest possible substep
+            (dt / max_substeps). Only used when `substeps` is 'adaptive'.
+        min_slope : float, optional
+            Slope below which a pair of nodes is ignored when estimating the
+            stable substep, to avoid vanishingly small substeps on near-flat
+            terrain. Only used when `substeps` is 'adaptive'.
         fields_to_track : str or array-like, optional
             The name of the fields at grid nodes to add to the StackedLayers at
             each iteration.
@@ -141,6 +165,10 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             exponent_discharge=exponent_discharge,
             exponent_slope=exponent_slope,
             ref_water_flux=ref_water_flux,
+            substeps=substeps,
+            substep_fraction=substep_fraction,
+            max_substeps=max_substeps,
+            min_slope=min_slope,
             fields_to_track=fields_to_track,
         )
 
@@ -150,6 +178,10 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         if self._receiver_link.ndim == 1:
             self._receiver_link = self._receiver_link[:, np.newaxis]
         self._water_flux_at_links = np.zeros((n_links, 1))
+        # Discharge term ``water_flux_at_links ** m`` of the stream power law.
+        # The water flux is fixed within a step, so this is computed once per
+        # step in `_prepare_step` rather than for every substep.
+        self._water_flux_term_at_links = np.zeros((n_links, 1))
 
         # Fields for sediment fluxes
         n_nodes = grid.number_of_nodes
@@ -169,9 +201,21 @@ class WaterDrivenDiffuser(_BaseStreamPower):
         Maps the water flux from the nodes to the links.
         """
         # With D8 MFD it looks like the first four receivers are the D4 ones
-        self._water_flux_at_links[self._receiver_link[:, :4].ravel(), 0] = (
-            self._flow_proportions[:, :4] * self._water_flux[:, :4]
-        ).ravel()
+        links = self._receiver_link[:, :4]
+        water_flux = self._flow_proportions[:, :4, 0] * self._water_flux[:, 0]
+
+        self._water_flux_at_links[:] = 0.0
+        has_receiver = (links > -1) & (links < self._grid.number_of_links)
+        self._water_flux_at_links[links[has_receiver], 0] = water_flux[has_receiver]
+
+    def _update_water_flux_term(self):
+        """
+        Updates the link-based discharge term ``water_flux_at_links ** m`` of the
+        stream power law from the current (normalized) water flux. Overrides the
+        node-based term of `_BaseStreamPower`, which this diffuser does not use.
+        """
+        self._map_water_flux_to_links()
+        np.power(self._water_flux_at_links, self._m, out=self._water_flux_term_at_links)
 
     def _calculate_sediment_flux(self, dt):
         """
@@ -181,7 +225,6 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             self._topography
         )[self._grid.active_links]
         self._calculate_active_layer_composition(dt)
-        self._calculate_sediment_diffusivity()
 
         self._grid.map_mean_of_link_nodes_to_link(
             self._K_sed[:, 0], out=self._K_sed_at_links
@@ -191,13 +234,12 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             self._active_layer_composition[:, 0],
             out=self._active_layer_composition_at_links,
         )
-        self._map_water_flux_to_links()
 
         self._sediment_flux_at_links[:] = (
             -self._K_sed_at_links
             * np.sign(self._slope_at_links)
             * self._active_layer_composition_at_links
-            * self._water_flux_at_links**self._m
+            * self._water_flux_term_at_links
             * np.abs(self._slope_at_links) ** self._n
         )
 
@@ -241,21 +283,8 @@ class WaterDrivenDiffuser(_BaseStreamPower):
 
         self._sediment_flux_at_links *= self._flux_limiter_at_links
 
-    def run_one_step(self, dt, update_compatible=False, update=False):
-        """Run the diffuser for one timestep, dt.
-
-        Parameters
-        ----------
-        dt : float (time)
-            The imposed timestep.
-        update_compatible : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer at the top of the stack only
-            if the new layer is compatible with the existing layer.
-        update : bool, optional
-            If False, create a new layer and deposit in that layer; otherwise,
-            deposition occurs in the existing layer.
-        """
+    def _calculate_sediment_thickness(self, dt):
+        """Calculates the sediment thickness change over the time step, dt."""
         core_nodes = self._grid.core_nodes
         cell_area = self._grid.cell_area_at_node[:, np.newaxis]
 
@@ -273,5 +302,3 @@ class WaterDrivenDiffuser(_BaseStreamPower):
             * dt
             / (1.0 - self._porosity)
         )
-
-        self._update_physical_fields(dt, update_compatible, update)

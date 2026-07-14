@@ -2,7 +2,7 @@
 
 # MIT License
 
-# Copyright (c) 2025 Guillaume Rongier
+# Copyright (c) 2025-2026 Guillaume Rongier
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@ from functools import partial
 import numpy as np
 from scipy.interpolate import CubicSpline, PchipInterpolator, make_interp_spline
 from landlab import Component
-
 
 ################################################################################
 # Component
@@ -92,7 +91,7 @@ class SeaLevelCalculator(Component):
         """
         super().__init__(grid)
 
-        self._grid.at_grid["sea_level__elevation"] = 0.
+        self._grid.at_grid["sea_level__elevation"] = 0.0
         self.initialize_output_fields()
 
         # Parameters
@@ -132,6 +131,7 @@ class SeaLevelCalculator(Component):
         sea_level = self._interpolator(self._time)
         self._grid.at_grid["sea_level__elevation"] = sea_level
 
+        self._bathymetry[:] = 0.0
         np.subtract(
             sea_level,
             self._topography,
