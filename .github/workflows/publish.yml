@@ -30,10 +30,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-13, cibw-only: cp311-macosx_x86_64 }
-          - { os: macos-13, cibw-only: cp312-macosx_x86_64 }
-          - { os: macos-13, cibw-only: cp313-macosx_x86_64 }
-          - { os: macos-13, cibw-only: cp314-macosx_x86_64 }
+          - { os: macos-15-intel, cibw-only: cp311-macosx_x86_64 }
+          - { os: macos-15-intel, cibw-only: cp312-macosx_x86_64 }
+          - { os: macos-15-intel, cibw-only: cp313-macosx_x86_64 }
+          - { os: macos-15-intel, cibw-only: cp314-macosx_x86_64 }
           - { os: macos-14, cibw-only: cp311-macosx_arm64 }
           - { os: macos-14, cibw-only: cp312-macosx_arm64 }
           - { os: macos-14, cibw-only: cp313-macosx_arm64 }
