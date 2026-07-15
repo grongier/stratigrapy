@@ -42,7 +42,6 @@ from stratigrapy.components import GravityDrivenRouter
 grid = RasterModelGrid((50, 50),
                        xy_spacing=(500., 500.),
                        number_of_classes=2,
-                       initial_allocation=1020,
                        number_of_layers_to_fuse=20,
                        number_of_top_layers=20)
 grid.set_closed_boundaries_at_grid_edges(True, True, True, False)
@@ -66,7 +65,7 @@ grid.stacked_layers.fuse(finalize=True, time=np.mean)
 # Plot a slice through the domain with sediments and bedrock
 fig, ax = plt.subplots(figsize=(8, 4))
 pc = grid.plot_layers(ax, 'composition', i_class=1, mask_wedges=True, cmap='pink', zorder=2)
-fig.colorbar(pc[0], ax=ax, label='Fraction of the second sediment class')
+fig.colorbar(pc, ax=ax, label='Fraction of the second sediment class')
 raster_y = grid.y_of_node[grid.core_nodes].reshape(grid.cell_grid_shape)[:, 24]
 raster_z = grid.at_node['topographic__elevation'][grid.core_nodes].reshape(grid.cell_grid_shape)[:, 24]
 ymin, ymax = ax.get_ylim()
