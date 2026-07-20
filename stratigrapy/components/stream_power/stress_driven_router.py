@@ -152,7 +152,7 @@ class StressDrivenRouter(_BaseRouter, _BaseStreamPower):
         gravitational_acceleration=9.81,
         ref_water_flux=None,
         substeps=None,
-        time_step_fraction=0.3,
+        substep_fraction=0.3,
         max_substeps=1000,
         min_slope=1e-7,
         fields_to_track=None,
@@ -271,7 +271,7 @@ class StressDrivenRouter(_BaseRouter, _BaseStreamPower):
             ref_water_flux=ref_water_flux,
             fields_to_track=fields_to_track,
             substeps=substeps,
-            time_step_fraction=time_step_fraction,
+            substep_fraction=substep_fraction,
             max_substeps=max_substeps,
             min_slope=min_slope,
         )

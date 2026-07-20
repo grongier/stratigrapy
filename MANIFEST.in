@@ -1,7 +1,7 @@
 include LICENSE
 include README.md
 
-recursive-include src/stratigrapy *.pyx *.pxd *.hpp
+recursive-include stratigrapy *.pyx *.pxd *.hpp
 
 exclude environment*yml
 

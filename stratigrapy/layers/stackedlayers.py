@@ -439,6 +439,10 @@ class StackedLayers:
         ] = values
         if name == "_dz":
             self._recompute_thickness()
+            last_layer = self._first_layer + self.number_of_layers - 1
+            _get_surface_index(
+                self._attrs["_dz"], self._first_layer, last_layer, self._surface_index
+            )
 
     def __iter__(self):
         return (name for name in self._attrs if not name.startswith("_"))
